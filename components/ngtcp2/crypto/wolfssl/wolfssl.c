@@ -31,10 +31,11 @@
 #include <ngtcp2/ngtcp2_crypto.h>
 #include <ngtcp2/ngtcp2_crypto_wolfssl.h>
 
-#include <wolfssl/ssl.h>
 #include <wolfssl/quic.h>
 
 #include "shared.h"
+
+#include "esp_log.h"
 
 #define PRINTF_DEBUG 0
 #if PRINTF_DEBUG

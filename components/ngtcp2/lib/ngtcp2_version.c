@@ -27,7 +27,7 @@
 #endif /* defined(HAVE_CONFIG_H) */
 
 #include <ngtcp2/ngtcp2.h>
-
+/*
 static ngtcp2_info version = {NGTCP2_VERSION_AGE, NGTCP2_VERSION_NUM,
                               NGTCP2_VERSION};
 
@@ -37,3 +37,5 @@ const ngtcp2_info *ngtcp2_version(int least_version) {
   }
   return &version;
 }
+*/
+

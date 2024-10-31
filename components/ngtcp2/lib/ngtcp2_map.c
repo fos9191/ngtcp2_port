@@ -31,6 +31,8 @@
 
 #include "ngtcp2_conv.h"
 
+#include <inttypes.h>
+
 #define NGTCP2_INITIAL_TABLE_LENBITS 4
 
 void ngtcp2_map_init(ngtcp2_map *map, const ngtcp2_mem *mem) {
@@ -110,8 +112,8 @@ void ngtcp2_map_print_distance(const ngtcp2_map *map) {
     }
 
     idx = hash(bkt->key, map->hashbits);
-    fprintf(stderr, "@%zu hash=%zu key=%" PRIu64 " base=%zu distance=%u\n", i,
-            hash(bkt->key, map->hashbits), bkt->key, idx, bkt->psl);
+    fprintf(stderr, "@%zu hash=%zu key=%" PRIu64 " base=%zu distance=%" PRIu32 "\n", 
+        i, hash(bkt->key, map->hashbits), bkt->key, idx, bkt->psl);
   }
 }
 #endif /* !defined(WIN32) */

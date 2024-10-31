@@ -24,11 +24,13 @@
 # See https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-guides/build-system.html
 #
 message(STATUS "Begin wolfssl ${CONFIG_CUSTOM_SETTING_WOLFSSL_ROOT}")
+
 cmake_minimum_required(VERSION 3.16)
 
 set(VERBOSE_COMPONENT_MESSAGES 1)
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DWOLFSSL_USER_SETTINGS")
 
-set(WOLFSSL_ROOT "C:/Users/fionn/Onedrive/Documents/wolfssl") ############################## i added !!################################################
+# set(WOLFSSL_ROOT "C:/Users/fionn/Onedrive/Documents/wolfssl") ############################## i added !!################################################
 
 
 # function: IS_ESP_IDF_COMPONENT
@@ -49,7 +51,9 @@ function( IS_ESP_IDF_COMPONENT  RESULT )
         message(STATUS "${COMPONENT_DIR} is within IDF_PATH.")
         set(${RESULT} 1 PARENT_SCOPE)
     else()
+        # this is normal and okay
         message(STATUS "${COMPONENT_DIR} is not within IDF_PATH.")
+        message(STATUS "IDF_PATH is ${IDF_PATH}")
         set(${RESULT} 0 PARENT_SCOPE)
     endif()
 endfunction()
@@ -60,6 +64,7 @@ IS_ESP_IDF_COMPONENT( IS_WOLSSL_ESP_IDF_COMPONENT )
 if( IS_WOLSSL_ESP_IDF_COMPONENT )
     message(STATUS "This wolfSSL is a component in ESP-IDF.")
     if ( CONFIG_IGNORE_ESP_IDF_WOLFSSL_COMPONENT )
+        message(STATUS "IDF COMPONENT REGISTER CREATED 0 !!!!!!!")
         idf_component_register()
         message(STATUS "Warning: wolfSSL component in ESP-IDF is being ignored.")
         return()
@@ -419,6 +424,7 @@ endif()
 
 if(CMAKE_BUILD_EARLY_EXPANSION)
     message(STATUS "wolfssl component CMAKE_BUILD_EARLY_EXPANSION:")
+    message(STATUS "IDF COMPONENT REGISTER CREATED 5 !!!!!!!")
     idf_component_register(
                             REQUIRES "${COMPONENT_REQUIRES}"
                             PRIV_REQUIRES # esp_hw_support
@@ -753,6 +759,8 @@ else()
         # Only register the component if we found wolfSSL source.
         # This is important to allow Cmake to finish to completion, otherwise the UI
         # may not be able to display the Kconfig settings to fix a bad or missing source.
+        message(STATUS "wolfssl found source - setting idf_component_register")
+        message(STATUS "IDF COMPONENT REGISTER CREATED 2 !!!!!!!")
         idf_component_register(
                                 SRC_DIRS "${COMPONENT_SRCDIRS}"
                                 INCLUDE_DIRS "${COMPONENT_ADD_INCLUDEDIRS}"
@@ -765,6 +773,7 @@ else()
     else()
         # Register the component simply to allow CMake to complete, but there's no wolfSSL source.
         # Expect many other errors, but the project should at least be loadable and UI can edit Kconfig settings.
+        message(STATUS "IDF COMPONENT REGISTER CREATED 1 !!!!!!!")
         idf_component_register()
         message(STATUS "Warning: wolfSSL component not registered as no source code found (WOLFSSL_ROOT is blank)")
     endif()
@@ -1019,6 +1028,13 @@ else()
     message(STATUS "ERROR: Could not find wolfSSL Source Code")
     message(STATUS "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
     message(STATUS "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+endif()
+
+
+if(WOLFSSL_QUIC)
+    message(STATUS "WOLFSSL_QUIC is enabled")
+else()
+    message(WARNING "WOLFSSL_QUIC is not enabled")
 endif()
 
 message(STATUS "************************************************************************************************")

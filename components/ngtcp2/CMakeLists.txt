@@ -36,128 +36,77 @@ cmake_minimum_required(VERSION 3.20)
 cmake_policy(SET CMP0063 NEW)
 
 # TODO : strip this down so only include wolfssl in the crypto etc
-set(COMPONENT_NAME ngtcp2)
+#set(COMPONENT_NAME ngtcp2)
 
+set(ENABLE_WOLFSSL true)
+set(PROJECT_VERSION         "0.1.1")
+set(PACKAGE_VERSION_NUM     0x000001)
+set(PACKAGE_VERSION         "${PROJECT_VERSION}")
 
-idf_component_register(SRCS
-                       SRC_DIRS ./lib ./crypto ./crypto/wolfssl
-                       INCLUDE_DIRS ./lib ./lib/includes ./crypto/includes
-                       REQUIRES wolfssl)
+message(STATUS "setting idf component register for ngtcp2 component")
 
-set(ENABLE_WOLFSSL ON CACHE BOOL "Enable wolfSSL as crypto")
-
-set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake" "${CMAKE_MODULE_PATH}")
-include(Version)
-
-include(GNUInstallDirs)
-include(CMakeDependentOption)
-include(CMakeOptions.txt)
-include(CheckCCompilerFlag)
-include(CheckCXXCompilerFlag)
-include(CheckCXXSymbolExists)
-include(CheckIncludeFile)
-check_include_file("arpa/inet.h"   HAVE_ARPA_INET_H)
-check_include_file("netinet/in.h"  HAVE_NETINET_IN_H)
-check_include_file("netinet/ip.h"  HAVE_NETINET_IP_H)
-check_include_file("unistd.h"      HAVE_UNISTD_H)
-check_include_file("sys/endian.h"  HAVE_SYS_ENDIAN_H)
-check_include_file("endian.h"      HAVE_ENDIAN_H)
-check_include_file("byteswap.h"    HAVE_BYTESWAP_H)
-check_include_file("asm/types.h"   HAVE_ASM_TYPES_H)
-check_include_file("linux/netlink.h"   HAVE_LINUX_NETLINK_H)
-check_include_file("linux/rtnetlink.h" HAVE_LINUX_RTNETLINK_H)
-
-include(CheckTypeSize)
-# Checks for typedefs, structures, and compiler characteristics.
-# AC_TYPE_SIZE_T
-check_type_size("ssize_t" SIZEOF_SSIZE_T)
-if(SIZEOF_SSIZE_T STREQUAL "")
-  # ssize_t is a signed type in POSIX storing at least -1.
-  # Set it to a pointer-size int.
-  set(ssize_t ptrdiff_t)
-endif()
-
-if(HAVE_ENDIAN_H)
-  check_symbol_exists(be64toh "endian.h" HAVE_DECL_BE64TOH)
-endif()
-if(NOT HAVE_DECL_BE64TOH AND HAVE_SYS_ENDIAN_H)
-  check_symbol_exists(be64toh "sys/endian.h" HAVE_DECL_BE64TOH)
-endif()
-
-check_symbol_exists(bswap_64 "byteswap.h" HAVE_DECL_BSWAP_64)
-check_symbol_exists(explicit_bzero "string.h" HAVE_EXPLICIT_BZERO)
-check_symbol_exists(memset_s "string.h" HAVE_MEMSET_S)
-
-
-set(WARNCFLAGS)
-set(WARNCXXFLAGS)
-if(CMAKE_C_COMPILER_ID MATCHES "MSVC")
-  if(ENABLE_WERROR)
-    set(WARNCFLAGS    /WX)
-    set(WARNCXXFLAGS  /WX)
-  endif()
-else()
-  if(ENABLE_WERROR)
-    set(WARNCFLAGS   "-Werror")
-    set(WARNCXXFLAGS "-Werror")
-  endif()
-
-  include(PickyWarningsC)
-  include(PickyWarningsCXX)
-endif()
-
-if(ENABLE_DEBUG)
-  set(DEBUGBUILD 1)
-endif()
-
-if(ENABLE_WOLFSSL)
-  set(WOLFSSL_INCLUDE_DIRS  ${WOLFSSL_INCLUDE_DIR})
-  set(HAVE_WOLFSSL TRUE)
-  set(HAVE_CRYPTO TRUE)
-else()
-  set(HAVE_WOLFSSL FALSE)
-  set(WOLFSSL_INCLUDE_DIRS  "")
-  set(WOLFSSL_LIBRARIES     "")
-endif()
-
-add_definitions(-DHAVE_CONFIG_H)
-configure_file(cmakeconfig.h.in config.h)
-# autotools-compatible names
-# Sphinx expects relative paths in the .rst files. Use the fact that the files
-# below are all one directory level deep.
-file(RELATIVE_PATH top_srcdir   "${CMAKE_CURRENT_BINARY_DIR}/dir" "${CMAKE_CURRENT_SOURCE_DIR}")
-file(RELATIVE_PATH top_builddir "${CMAKE_CURRENT_BINARY_DIR}/dir" "${CMAKE_CURRENT_BINARY_DIR}")
-set(abs_top_srcdir  "${CMAKE_CURRENT_SOURCE_DIR}")
-set(abs_top_builddir "${CMAKE_CURRENT_BINARY_DIR}")
-# libngtcp2.pc (pkg-config file)
-set(prefix          "${CMAKE_INSTALL_PREFIX}")
-set(exec_prefix     "${CMAKE_INSTALL_PREFIX}")
-set(libdir          "${CMAKE_INSTALL_FULL_LIBDIR}")
-set(includedir      "${CMAKE_INSTALL_FULL_INCLUDEDIR}")
-set(VERSION         "${PACKAGE_VERSION}")
-# For init scripts and systemd service file (in contrib/)
-set(bindir          "${CMAKE_INSTALL_FULL_BINDIR}")
-set(sbindir         "${CMAKE_INSTALL_FULL_SBINDIR}")
-foreach(name
-  lib/libngtcp2.pc
-  lib/includes/ngtcp2/version.h
+# mbedtls can be specified as REQUIRES
+idf_component_register(
+    SRC_DIRS lib crypto crypto/wolfssl
+    INCLUDE_DIRS lib lib/includes crypto crypto/includes
+    PRIV_REQUIRES wolfssl 
 )
-  configure_file("${name}.in" "${name}" @ONLY)
-endforeach()
 
-include_directories(
-  "${CMAKE_CURRENT_BINARY_DIR}" # for config.h
-)
-# For use in src/CMakeLists.txt
-set(PKGDATADIR "${CMAKE_INSTALL_FULL_DATADIR}/${CMAKE_PROJECT_NAME}")
+# to help solve circular component issues - DIDNT WORK
+# message(STATUS "Component lib is ${COMPONENT_TARGET}")
+# set_property(TARGET ${COMPONENT_LIB} APPEND PROPERTY LINK_INTERFACE_MULTIPLICITY 4)
 
-add_subdirectory(lib)
-add_subdirectory(crypto)
-add_subdirectory(third-party)
+# message(STATUS "${COMPONENT_TARGET} and ${CMAKE_SOURCE_DIR}/components/wolfssl/")
+#target_include_directories(${COMPONENT_TARGET} PRIVATE ${CMAKE_SOURCE_DIR}/components/wolfssl/wolfssl)
 
-if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
-    add_compile_options(-Wno-maybe-uninitialized)
-endif()
+message(STATUS "finished idf component register for ngtcp2 component")
+
+
+
+
+add_compile_definitions(OPENSSL_ALL)
+add_compile_definitions(OPENSSL_EXTRA)
+add_compile_definitions(OPENSSL_EXTRA_X509_SMALL)
+
+add_compile_definitions(WOLFSSL_AES_128)
+add_compile_definitions(WOLFSSL_AES_DIRECT)
+add_compile_definitions(WOLFSSL_AES_COUNTER)
+add_compile_definitions(WOLFSSL_SHA384)
+add_compile_definitions(WOLFSSL_QUIC)
+add_compile_definitions(HAVE_AESGCM)
+add_compile_definitions(HAVE_AESCCM)
+add_compile_definitions(HAVE_EX_DATA)
+add_compile_definitions(HAVE_SNI)
+add_compile_definitions(HAVE_HKDF)
+add_compile_definitions(HAVE_CHACHA)
+add_compile_definitions(HAVE_POLY1305)
+add_compile_definitions(HAVE_ALPN)
+add_compile_definitions(HAVE_STUNNEL)
+add_compile_definitions(WOLFSSL_TLS13)
+add_compile_definitions(HAVE_ECC)
+add_compile_definitions(HAVE_SESSION_TICKET)
+add_compile_definitions(WOLFSSL_EARLY_DATA)
+
+add_compile_definitions(WOLFSSL_ALT_CERT_CHAINS)
+
+add_compile_definitions(WC_RSA_PSS)
+add_compile_definitions(WOLFSSL_PSS_LONG_SALT)
+add_compile_definitions(WOLFSSL_RSA_VFY)
+add_compile_definitions(WOLFSSL_ASN)
+add_compile_definitions(WC_RSA_NO_PADDING)
+
+add_compile_definitions(WOLFSSL_ENCRYPTED_KEYS)
+add_compile_definitions(HAVE_TLS_EXTENSIONS)
+add_compile_definitions(HAVE_SUPPORTED_CURVES)
+
+add_compile_definitions(WOLFSSL_SHA512)
+add_compile_definitions(HAVE_ED25519)
+
+add_compile_definitions(WOLFSSL_CERT_NAME_ALL)
+
+add_compile_definitions(WOLFSSL_EITHER_SIDE)
+add_compile_definitions(WOLFSSL_TICKET_HAVE_ID)
+add_compile_definitions(WOLFSSL_ERROR_CODE_OPENSSL)
 
 string(TOUPPER "${CMAKE_BUILD_TYPE}" _build_type)
 message(STATUS "summary of build options:

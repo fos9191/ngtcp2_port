@@ -740,7 +740,7 @@ static void ksl_print(const ngtcp2_ksl *ksl, ngtcp2_ksl_blk *blk,
   size_t i;
   ngtcp2_ksl_node *node;
 
-  fprintf(stderr, "LV=%zu n=%u\n", level, blk->n);
+  fprintf(stderr, "LV=%zu n=%lu\n", level, blk->n);
 
   if (blk->leaf) {
     for (i = 0; i < blk->n; ++i) {
