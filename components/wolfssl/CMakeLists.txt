@@ -1030,12 +1030,18 @@ else()
     message(STATUS "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
 endif()
 
+set(WOLFSSL_QUIC TRUE)  
 
 if(WOLFSSL_QUIC)
     message(STATUS "WOLFSSL_QUIC is enabled")
 else()
     message(WARNING "WOLFSSL_QUIC is not enabled")
 endif()
+
+message(STATUS "setting wolfssl config")
+set(WOLFSSL_CONFIG_OPTIONS "--enable-all --enable-aesni --enable-harden --enable-keylog-export --disable-ech --enable-quic")
+message(STATUS "wolfssl config set")
+
 
 message(STATUS "************************************************************************************************")
 message(STATUS "wolfSSL component config complete!")

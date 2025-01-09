@@ -85,6 +85,12 @@
 /* Turn on messages that are useful to see only in examples. */
 #define WOLFSSL_EXAMPLE_VERBOSITY
 
+// MY DEFINES ARE HERE - added so that parts of wolfssl get compiled so that ngtcp2 can access them
+#define OPENSSL_EXTRA
+#define WOLFSSL_QUIC
+#define WOLFSSL_AES_COUNTER
+#define WOLFSSL_AES_128
+
 /* wolfSSL Examples: set macros used in example applications.
  *
  * These Settings NOT available in ESP-IDF (e.g. esp-tls)

@@ -2,7 +2,13 @@
     "idf.adapterTargetName": "esp32",
     "files.associations": {
         "inttypes.h": "c",
-        "*.in": "cpp"
+        "*.in": "cpp",
+        "stdio.h": "c",
+        "options.h": "c",
+        "settings.h": "c",
+        "quic_init_client.h": "c",
+        "ngtcp2_conn.h": "c",
+        "time.h": "c"
     },
     "C_Cpp.errorSquiggles": "disabled"
 }

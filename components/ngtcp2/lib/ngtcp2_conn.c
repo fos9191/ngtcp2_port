@@ -1414,7 +1414,10 @@ int ngtcp2_conn_client_new_versioned(
   int settings_version, const ngtcp2_settings *settings,
   int transport_params_version, const ngtcp2_transport_params *params,
   const ngtcp2_mem *mem, void *user_data) {
+  printf("at the start of ngtcp2_conn_client_new_versioned");
   int rv;
+
+  printf("in ngtcp2_conn_client_new_versioned");
 
   rv = conn_new(pconn, dcid, scid, path, client_chosen_version,
                 callbacks_version, callbacks, settings_version, settings,
@@ -1426,6 +1429,8 @@ int ngtcp2_conn_client_new_versioned(
   (*pconn)->state = NGTCP2_CS_CLIENT_INITIAL;
   (*pconn)->local.bidi.next_stream_id = 0;
   (*pconn)->local.uni.next_stream_id = 2;
+
+  printf("here in ngtcp2_conn_client_new_versioned");
 
   rv = ngtcp2_conn_commit_local_transport_params(*pconn);
   if (rv != 0) {

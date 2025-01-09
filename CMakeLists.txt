@@ -60,10 +60,9 @@ include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 
 project(ngtcp2_port)
 
-
-
 add_definitions(-DWOLFSSL_TLS13)
+add_definitions(-DWOLFSSL_ESPWROOM32)
 
-set(WOLFSSL_QUIC)
+set(WOLFSSL_QUIC TRUE)  
 
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DWOLFSSL_USER_SETTINGS")
