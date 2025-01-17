@@ -4220,6 +4220,9 @@ WOLFSSL_API long wolfSSL_SSL_get_secure_renegotiation_support(WOLFSSL* ssl);
 #endif
 
 /* Session Ticket */
+// MY CHANGE
+WOLFSSL_API int wolfSSL_CTX_UseSessionTicket(WOLFSSL_CTX* ctx);
+
 #ifdef HAVE_SESSION_TICKET
 
 #if !defined(WOLFSSL_NO_DEF_TICKET_ENC_CB) && !defined(NO_WOLFSSL_SERVER)

@@ -1,13 +1,82 @@
-#include <ngtcp2/ngtcp2.h>
-#include "ngtcp2/ngtcp2_crypto.h"
-#include "quic_init_client.h"
-#include <stdio.h>
-#include <string.h>
-#include <stdarg.h>
-#include <wolfssl/wolfcrypt/random.h>
-#include <time.h>
+/*
+ * ngtcp2
+ *
+ * Copyright (c) 2021 ngtcp2 contributors
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining
+ * a copy of this software and associated documentation files (the
+ * "Software"), to deal in the Software without restriction, including
+ * without limitation the rights to use, copy, modify, merge, publish,
+ * distribute, sublicense, and/or sell copies of the Software, and to
+ * permit persons to whom the Software is furnished to do so, subject to
+ * the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be
+ * included in all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
+ * LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+ * OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+ * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ */
+#ifdef HAVE_CONFIG_H
+#  include <config.h>
+#endif /* defined(HAVE_CONFIG_H) */
 
-static ngtcp2_conn *conn;
+#include <time.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netdb.h>
+#include <arpa/inet.h>
+#include <string.h>
+#include <stdio.h>
+#include <errno.h>
+
+#include <ngtcp2/ngtcp2.h>
+#include <ngtcp2/ngtcp2_crypto.h>
+#include <ngtcp2/ngtcp2_crypto_wolfssl.h>
+
+#include <openssl/ssl.h>
+#include <openssl/err.h>
+
+#include "lwip/sys.h"
+#include "lwip/netdb.h"
+#include "lwip/dns.h"
+
+// must include wolfssl/settings.h before any other wolfssl files
+#include <wolfssl/wolfcrypt/settings.h> 
+#include <wolfssl/ssl.h>
+
+//#include <ev.h>
+
+#define REMOTE_HOST "127.0.0.1"
+#define REMOTE_PORT "4433"
+#define ALPN "\xahq-interop"
+#define MESSAGE "GET /\r\n"
+
+/*
+ * Example 1: Handshake with www.google.com
+ *
+ * #define REMOTE_HOST "www.google.com"
+ * #define REMOTE_PORT "443"
+ * #define ALPN "\x2h3"
+ *
+ * and undefine MESSAGE macro.
+ */
+
+static uint64_t timestamp(void) {
+  struct timespec tp;
+
+  if (clock_gettime(CLOCK_MONOTONIC, &tp) != 0) {
+    fprintf(stderr, "clock_gettime: %s\n", strerror(errno));
+    exit(EXIT_FAILURE);
+  }
+
+  return (uint64_t)tp.tv_sec * NGTCP2_SECONDS + (uint64_t)tp.tv_nsec;
+}
 
 int RAND_bytes(unsigned char *buffer, int num) {
     // Initialize the random seed only once (if it's not already done)
@@ -25,33 +94,155 @@ int RAND_bytes(unsigned char *buffer, int num) {
     return 1;  // Indicate success
 }
 
-int rand_function(uint8_t *dest, size_t destlen, const ngtcp2_rand_ctx *rand_ctx) {
-    return rand();
+static int create_sock(struct sockaddr *addr, socklen_t *paddrlen,
+                       const char *host, const char *port) {
+  struct addrinfo hints = {0};
+  struct addrinfo *res, *rp;
+  int rv;
+  int fd = -1;
+
+  hints.ai_flags = AF_UNSPEC;
+  hints.ai_socktype = SOCK_DGRAM;
+
+  rv = getaddrinfo(host, port, &hints, &res);
+  if (rv != 0) {
+    //fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(rv));
+    printf(stderr);
+    return -1;
+  }
+
+  for (rp = res; rp; rp = rp->ai_next) {
+    fd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+    if (fd == -1) {
+      continue;
+    }
+
+    break;
+  }
+
+  if (fd == -1) {
+    goto end;
+  }
+
+  *paddrlen = rp->ai_addrlen;
+  memcpy(addr, rp->ai_addr, rp->ai_addrlen);
+
+end:
+  freeaddrinfo(res);
+
+  return fd;
 }
 
-int get_new_connection_id(ngtcp2_conn *conn, ngtcp2_cid *cid, uint8_t *token,
-                             size_t cidlen, void *user_data) {
-    // TODO: Generate a new connection ID meaningfully
-    return rand();
+static int connect_sock(struct sockaddr *local_addr, socklen_t *plocal_addrlen,
+                        int fd, const struct sockaddr *remote_addr,
+                        size_t remote_addrlen) {
+  socklen_t len;
+
+  if (connect(fd, remote_addr, (socklen_t)remote_addrlen) != 0) {
+    fprintf(stderr, "connect: %s\n", strerror(errno));
+    return -1;
+  }
+
+  len = *plocal_addrlen;
+
+  if (getsockname(fd, local_addr, &len) == -1) {
+    fprintf(stderr, "getsockname: %s\n", strerror(errno));
+    return -1;
+  }
+
+  *plocal_addrlen = len;
+
+  return 0;
 }
 
-void log_printf(void *user_data, const char *format, ...) {
-    va_list args;
-    va_start(args, format);
-    vprintf(format, args);
-    va_end(args);
+struct client {
+  ngtcp2_crypto_conn_ref conn_ref;
+  int fd;
+  struct sockaddr_storage local_addr;
+  socklen_t local_addrlen;
+  WOLFSSL_CTX *ssl_ctx;
+  WOLFSSL *ssl;
+  ngtcp2_conn *conn;
+
+  struct {
+    int64_t stream_id;
+    const uint8_t *data;
+    size_t datalen;
+    size_t nwrite;
+  } stream;
+
+  ngtcp2_ccerr last_error;
+  
+  uint64_t timestamp_us;
+};
+
+static int numeric_host_family(const char *hostname, int family) {
+  uint8_t dst[sizeof(struct in6_addr)];
+  return inet_pton(family, hostname, dst) == 1;
 }
 
-ngtcp2_path set_ngtcp2_path(const char *local_ip, const char *remote_ip, uint16_t local_port, uint16_t remote_port) {
-    ngtcp2_path path;
-    ngtcp2_addr local_addr, remote_addr;
+static int numeric_host(const char *hostname) {
+  return numeric_host_family(hostname, AF_INET) ||
+         numeric_host_family(hostname, AF_INET6);
+}
 
-    ngtcp2_addr_init(&local_addr, local_ip, local_port);
-    ngtcp2_addr_init(&remote_addr, remote_ip, remote_port);
+static int client_ssl_init(struct client *c) {
+  c->ssl_ctx = wolfSSL_CTX_new(wolfSSLv23_client_method());
+  if (!c->ssl_ctx) {
+    //fprintf(stderr, "SSL_CTX_new: %s\n",ERR_error_string(ERR_get_error(), NULL));
+    return -1;
+  }
 
-    path.local = local_addr;
-    path.remote = remote_addr;
-    return path;
+  if (ngtcp2_crypto_wolfssl_configure_client_context(c->ssl_ctx) != 0) {
+    fprintf(stderr, "ngtcp2_crypto_wolfssl_configure_client_context failed\n");
+    return -1;
+  }
+
+  c->ssl = wolfSSL_new(c->ssl_ctx);
+  if (!c->ssl) {
+    //fprintf(stderr, "SSL_new: %s\n", ERR_error_string(ERR_get_error(), NULL));
+    return -1;
+  }
+  
+  /*
+  SSL_set_app_data(c->ssl, &c->conn_ref);
+  SSL_set_connect_state(c->ssl);
+  SSL_set_alpn_protos(c->ssl, (const unsigned char *)ALPN, sizeof(ALPN) - 1);
+  if (!numeric_host(REMOTE_HOST)) {
+    SSL_set_tlsext_host_name(c->ssl, REMOTE_HOST);
+  }
+  */
+
+  return 0;
+}
+
+static void rand_cb(uint8_t *dest, size_t destlen,
+                    const ngtcp2_rand_ctx *rand_ctx) {
+  size_t i;
+  (void)rand_ctx;
+
+  for (i = 0; i < destlen; ++i) {
+    *dest = (uint8_t)random();
+  }
+}
+
+static int get_new_connection_id_cb(ngtcp2_conn *conn, ngtcp2_cid *cid,
+                                    uint8_t *token, size_t cidlen,
+                                    void *user_data) {
+  (void)conn;
+  (void)user_data;
+
+  if (RAND_bytes(cid->data, (int)cidlen) != 1) {
+    return NGTCP2_ERR_CALLBACK_FAILURE;
+  }
+
+  cid->datalen = cidlen;
+
+  if (RAND_bytes(token, NGTCP2_STATELESS_RESET_TOKENLEN) != 1) {
+    return NGTCP2_ERR_CALLBACK_FAILURE;
+  }
+
+  return 0;
 }
 
 static int extend_max_local_streams_bidi(ngtcp2_conn *conn,
@@ -86,163 +277,438 @@ static int extend_max_local_streams_bidi(ngtcp2_conn *conn,
 #endif /* !defined(MESSAGE) */
 }
 
-static void rand_cb(uint8_t *dest, size_t destlen,
-                    const ngtcp2_rand_ctx *rand_ctx) {
-  size_t i;
-  (void)rand_ctx;
-
-  for (i = 0; i < destlen; ++i) {
-    *dest = (uint8_t)random();
-  }
-}
-
-static int get_new_connection_id_cb(ngtcp2_conn *conn, ngtcp2_cid *cid,
-                                    uint8_t *token, size_t cidlen,
-                                    void *user_data) {
-  (void)conn;
+static void log_printf(void *user_data, const char *fmt, ...) {
+  va_list ap;
   (void)user_data;
 
-  if (RAND_bytes(cid->data, (int)cidlen) != 1) {
-    return NGTCP2_ERR_CALLBACK_FAILURE;
+  va_start(ap, fmt);
+  vfprintf(stderr, fmt, ap);
+  va_end(ap);
+
+  fprintf(stderr, "\n");
+}
+
+static int client_quic_init(struct client *c,
+                            const struct sockaddr *remote_addr,
+                            socklen_t remote_addrlen,
+                            const struct sockaddr *local_addr,
+                            socklen_t local_addrlen) {
+  ngtcp2_path path = {
+    {
+      (struct sockaddr *)local_addr,
+      local_addrlen,
+    },
+    {
+      (struct sockaddr *)remote_addr,
+      remote_addrlen,
+    },
+    NULL,
+  };
+  ngtcp2_callbacks callbacks = {
+    ngtcp2_crypto_client_initial_cb,
+    NULL, /* recv_client_initial */
+    ngtcp2_crypto_recv_crypto_data_cb,
+    NULL, /* handshake_completed */
+    NULL, /* recv_version_negotiation */
+    ngtcp2_crypto_encrypt_cb,
+    ngtcp2_crypto_decrypt_cb,
+    ngtcp2_crypto_hp_mask_cb,
+    NULL, /* recv_stream_data */
+    NULL, /* acked_stream_data_offset */
+    NULL, /* stream_open */
+    NULL, /* stream_close */
+    NULL, /* recv_stateless_reset */
+    ngtcp2_crypto_recv_retry_cb,
+    extend_max_local_streams_bidi,
+    NULL, /* extend_max_local_streams_uni */
+    rand_cb,
+    get_new_connection_id_cb,
+    NULL, /* remove_connection_id */
+    ngtcp2_crypto_update_key_cb,
+    NULL, /* path_validation */
+    NULL, /* select_preferred_address */
+    NULL, /* stream_reset */
+    NULL, /* extend_max_remote_streams_bidi */
+    NULL, /* extend_max_remote_streams_uni */
+    NULL, /* extend_max_stream_data */
+    NULL, /* dcid_status */
+    NULL, /* handshake_confirmed */
+    NULL, /* recv_new_token */
+    ngtcp2_crypto_delete_crypto_aead_ctx_cb,
+    ngtcp2_crypto_delete_crypto_cipher_ctx_cb,
+    NULL, /* recv_datagram */
+    NULL, /* ack_datagram */
+    NULL, /* lost_datagram */
+    ngtcp2_crypto_get_path_challenge_data_cb,
+    NULL, /* stream_stop_sending */
+    ngtcp2_crypto_version_negotiation_cb,
+    NULL, /* recv_rx_key */
+    NULL, /* recv_tx_key */
+    NULL, /* early_data_rejected */
+  };
+  ngtcp2_cid dcid, scid;
+  ngtcp2_settings settings;
+  ngtcp2_transport_params params;
+  int rv;
+
+  dcid.datalen = NGTCP2_MIN_INITIAL_DCIDLEN;
+  if (RAND_bytes(dcid.data, (int)dcid.datalen) != 1) {
+    fprintf(stderr, "RAND_bytes failed\n");
+    return -1;
   }
 
-  cid->datalen = cidlen;
+  scid.datalen = 8;
+  if (RAND_bytes(scid.data, (int)scid.datalen) != 1) {
+    fprintf(stderr, "RAND_bytes failed\n");
+    return -1;
+  }
 
-  if (RAND_bytes(token, NGTCP2_STATELESS_RESET_TOKENLEN) != 1) {
-    return NGTCP2_ERR_CALLBACK_FAILURE;
+  ngtcp2_settings_default(&settings);
+
+  settings.initial_ts = timestamp();
+  settings.log_printf = log_printf;
+
+  ngtcp2_transport_params_default(&params);
+
+  params.initial_max_streams_uni = 3;
+  params.initial_max_stream_data_bidi_local = 128 * 1024;
+  params.initial_max_data = 1024 * 1024;
+
+  rv =
+    ngtcp2_conn_client_new(&c->conn, &dcid, &scid, &path, NGTCP2_PROTO_VER_V1,
+                           &callbacks, &settings, &params, NULL, c);
+  if (rv != 0) {
+    fprintf(stderr, "ngtcp2_conn_client_new: %s\n", ngtcp2_strerror(rv));
+    return -1;
+  }
+
+  ngtcp2_conn_set_tls_native_handle(c->conn, c->ssl);
+
+  return 0;
+}
+
+static int client_read(struct client *c) {
+  uint8_t buf[65536];
+  struct sockaddr_storage addr;
+  struct iovec iov = {buf, sizeof(buf)};
+  struct msghdr msg = {0};
+  ssize_t nread;
+  ngtcp2_path path;
+  ngtcp2_pkt_info pi = {0};
+  int rv;
+
+  msg.msg_name = &addr;
+  msg.msg_iov = &iov;
+  msg.msg_iovlen = 1;
+
+  for (;;) {
+    msg.msg_namelen = sizeof(addr);
+
+    nread = recvmsg(c->fd, &msg, MSG_DONTWAIT);
+
+    if (nread == -1) {
+      if (errno != EAGAIN && errno != EWOULDBLOCK) {
+        fprintf(stderr, "recvmsg: %s\n", strerror(errno));
+      }
+
+      break;
+    }
+
+    path.local.addrlen = c->local_addrlen;
+    path.local.addr = (struct sockaddr *)&c->local_addr;
+    path.remote.addrlen = msg.msg_namelen;
+    path.remote.addr = msg.msg_name;
+
+    rv = ngtcp2_conn_read_pkt(c->conn, &path, &pi, buf, (size_t)nread,
+                              timestamp());
+    if (rv != 0) {
+      fprintf(stderr, "ngtcp2_conn_read_pkt: %s\n", ngtcp2_strerror(rv));
+      if (!c->last_error.error_code) {
+        if (rv == NGTCP2_ERR_CRYPTO) {
+          ngtcp2_ccerr_set_tls_alert(
+            &c->last_error, ngtcp2_conn_get_tls_alert(c->conn), NULL, 0);
+        } else {
+          ngtcp2_ccerr_set_liberr(&c->last_error, rv, NULL, 0);
+        }
+      }
+      return -1;
+    }
   }
 
   return 0;
 }
 
+static int client_send_packet(struct client *c, const uint8_t *data,
+                              size_t datalen) {
+  struct iovec iov = {(uint8_t *)data, datalen};
+  struct msghdr msg = {0};
+  ssize_t nwrite;
 
-int quic_client_init(ngtcp2_path path) {
-    ngtcp2_callbacks callbacks = {
-        ngtcp2_crypto_client_initial_cb,
-        NULL, /* recv_client_initial */
-        ngtcp2_crypto_recv_crypto_data_cb,
-        NULL, /* handshake_completed */
-        NULL, /* recv_version_negotiation */
-        ngtcp2_crypto_encrypt_cb,
-        ngtcp2_crypto_decrypt_cb,
-        ngtcp2_crypto_hp_mask_cb,
-        NULL, /* recv_stream_data */
-        NULL, /* acked_stream_data_offset */
-        NULL, /* stream_open */
-        NULL, /* stream_close */
-        NULL, /* recv_stateless_reset */
-        ngtcp2_crypto_recv_retry_cb,
-        extend_max_local_streams_bidi,
-        NULL, /* extend_max_local_streams_uni */
-        rand_cb,
-        get_new_connection_id_cb,
-        NULL, /* remove_connection_id */
-        ngtcp2_crypto_update_key_cb,
-        NULL, /* path_validation */
-        NULL, /* select_preferred_address */
-        NULL, /* stream_reset */
-        NULL, /* extend_max_remote_streams_bidi */
-        NULL, /* extend_max_remote_streams_uni */
-        NULL, /* extend_max_stream_data */
-        NULL, /* dcid_status */
-        NULL, /* handshake_confirmed */
-        NULL, /* recv_new_token */
-        ngtcp2_crypto_delete_crypto_aead_ctx_cb,
-        ngtcp2_crypto_delete_crypto_cipher_ctx_cb,
-        NULL, /* recv_datagram */
-        NULL, /* ack_datagram */
-        NULL, /* lost_datagram */
-        ngtcp2_crypto_get_path_challenge_data_cb,
-        NULL, /* stream_stop_sending */
-        ngtcp2_crypto_version_negotiation_cb,
-        NULL, /* recv_rx_key */
-        NULL, /* recv_tx_key */
-        NULL, /* early_data_rejected */
-    };
-    ngtcp2_cid dcid, scid;
-    ngtcp2_settings settings;
-    ngtcp2_transport_params transport_params;
-    int rv;
+  msg.msg_iov = &iov;
+  msg.msg_iovlen = 1;
 
-    dcid.datalen = NGTCP2_MIN_INITIAL_DCIDLEN;
-    if (RAND_bytes(dcid.data, (int)dcid.datalen) != 1) {
-        fprintf(stderr, "RAND_bytes failed\n");
-        return -1;
-    }
+  do {
+    nwrite = sendmsg(c->fd, &msg, 0);
+  } while (nwrite == -1 && errno == EINTR);
 
-    scid.datalen = 8;
-    if (RAND_bytes(scid.data, (int)scid.datalen) != 1) {
-        fprintf(stderr, "RAND_bytes failed\n");
-        return -1;
-    }
+  if (nwrite == -1) {
+    fprintf(stderr, "sendmsg: %s\n", strerror(errno));
 
-    printf("dcid is: ");
-    for (size_t i = 0; i < dcid.datalen; i++) {
-        printf("%02x", dcid.data[i]);  // Print each byte as a 2-digit hexadecimal value
-    }
-    printf("\n");
+    return -1;
+  }
 
-    printf("scid is: ");
-    for (size_t i = 0; i < scid.datalen; i++) {
-        printf("%02x", scid.data[i]);  // Print each byte as a 2-digit hexadecimal value
-    }
-    printf("\n");
-
-    // Initialize settings
-    ngtcp2_settings_default(&settings);
-    settings.log_printf = log_printf;
-
-    // Initialize transport parameters
-    /*
-    memset(&transport_params, 0, sizeof(transport_params));
-    transport_params.initial_max_stream_data_bidi_local = 65536;
-    transport_params.initial_max_data = 1048576;
-    transport_params.initial_max_streams_bidi = 1;
-    transport_params.initial_max_streams_uni = 1;
-    transport_params.active_connection_id_limit = NGTCP2_DEFAULT_ACTIVE_CONNECTION_ID_LIMIT; // or use a custom value >= default
-    */
-    
-    ngtcp2_transport_params_default(&transport_params);
-    transport_params.initial_max_streams_uni = 3;
-    transport_params.initial_max_stream_data_bidi_local = 128 * 1024;
-    transport_params.initial_max_data = 1024 * 1024;
-    // TODO : generate random numbers here using wolfssl random number gen - hardcoded just to test
-    /*
-    ngtcp2_cid dcid, scid;
-    dcid.datalen = NGTCP2_MIN_INITIAL_DCIDLEN; 
-    uint8_t hardcoded_dcid[NGTCP2_MIN_INITIAL_DCIDLEN] = {0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08};
-    memcpy(dcid.data, hardcoded_dcid, dcid.datalen); // Copy hardcoded values into dcid.data
-    scid.datalen = 8; 
-    uint8_t hardcoded_scid[8] = {0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F};
-    memcpy(scid.data, hardcoded_scid, scid.datalen);
-    */
-
-    printf("connection init done, attempting to create connection\n");
-
-    // allocate memory for conn object - this object will represent a quic connection 
-    // this doesnt work right now cuz ngtcp2_conn struct is not visible from here so the size is unknown - fix this 
-    printf("testing malloc with 10 bytes\n");
-    char *test = (char *)malloc(10);
-    printf("10 bytes worked\n");
-    
-    printf("malloc for ngtcp2_conn object\n");
-    ngtcp2_conn *conn = (ngtcp2_conn *)malloc(500);
-    printf("conn object memory allocated successfully\n");
-
-    // Create the ngtcp2 connection
-    printf("populating conn object created\n");
-    rv = ngtcp2_conn_client_new(&conn, &dcid, &scid, &path, NGTCP2_PROTO_VER_V1, &callbacks, &settings, &transport_params, NULL, NULL);
-    if (rv != 0) {
-        printf("Failed to initialize ngtcp2 connection\n");
-        return -1;
-    }
-
-    printf("ngtcp2 connection initialized successfully.\n");
-    return 0;
+  return 0;
 }
 
-void quic_client_cleanup(void) {
-    if (conn != NULL) {
-        ngtcp2_conn_del(conn);
+static size_t client_get_message(struct client *c, int64_t *pstream_id,
+                                 int *pfin, ngtcp2_vec *datav,
+                                 size_t datavcnt) {
+  if (datavcnt == 0) {
+    return 0;
+  }
+
+  if (c->stream.stream_id != -1 && c->stream.nwrite < c->stream.datalen) {
+    *pstream_id = c->stream.stream_id;
+    *pfin = 1;
+    datav->base = (uint8_t *)c->stream.data + c->stream.nwrite;
+    datav->len = c->stream.datalen - c->stream.nwrite;
+    return 1;
+  }
+
+  *pstream_id = -1;
+  *pfin = 0;
+  datav->base = NULL;
+  datav->len = 0;
+
+  return 0;
+}
+
+static int client_write_streams(struct client *c) {
+  ngtcp2_tstamp ts = timestamp();
+  ngtcp2_pkt_info pi;
+  ngtcp2_ssize nwrite;
+  uint8_t buf[1452];
+  ngtcp2_path_storage ps;
+  ngtcp2_vec datav;
+  size_t datavcnt;
+  int64_t stream_id;
+  ngtcp2_ssize wdatalen;
+  uint32_t flags;
+  int fin;
+
+  ngtcp2_path_storage_zero(&ps);
+
+  for (;;) {
+    datavcnt = client_get_message(c, &stream_id, &fin, &datav, 1);
+
+    flags = NGTCP2_WRITE_STREAM_FLAG_MORE;
+    if (fin) {
+      flags |= NGTCP2_WRITE_STREAM_FLAG_FIN;
     }
+
+    nwrite = ngtcp2_conn_writev_stream(c->conn, &ps.path, &pi, buf, sizeof(buf),
+                                       &wdatalen, flags, stream_id, &datav,
+                                       datavcnt, ts);
+    if (nwrite < 0) {
+      switch (nwrite) {
+      case NGTCP2_ERR_WRITE_MORE:
+        c->stream.nwrite += (size_t)wdatalen;
+        continue;
+      default:
+        fprintf(stderr, "ngtcp2_conn_writev_stream: %s\n",
+                ngtcp2_strerror((int)nwrite));
+        ngtcp2_ccerr_set_liberr(&c->last_error, (int)nwrite, NULL, 0);
+        return -1;
+      }
+    }
+
+    if (nwrite == 0) {
+      return 0;
+    }
+
+    if (wdatalen > 0) {
+      c->stream.nwrite += (size_t)wdatalen;
+    }
+
+    if (client_send_packet(c, buf, (size_t)nwrite) != 0) {
+      break;
+    }
+  }
+
+  return 0;
+}
+
+/*
+static int client_write(struct client *c) {
+  ngtcp2_tstamp expiry, now;
+  ev_tstamp t;
+
+  if (client_write_streams(c) != 0) {
+    return -1;
+  }
+
+  expiry = ngtcp2_conn_get_expiry(c->conn);
+  now = timestamp();
+
+  t = expiry < now ? 1e-9 : (ev_tstamp)(expiry - now) / NGTCP2_SECONDS;
+
+  c->timer.repeat = t;
+  ev_timer_again(EV_DEFAULT, &c->timer);
+
+  return 0;
+}
+*/
+
+
+static int client_handle_expiry(struct client *c) {
+  int rv = ngtcp2_conn_handle_expiry(c->conn, timestamp());
+  if (rv != 0) {
+    fprintf(stderr, "ngtcp2_conn_handle_expiry: %s\n", ngtcp2_strerror(rv));
+    return -1;
+  }
+
+  return 0;
+}
+
+/*
+static void client_close(struct client *c) {
+  ngtcp2_ssize nwrite;
+  ngtcp2_pkt_info pi;
+  ngtcp2_path_storage ps;
+  uint8_t buf[1280];
+
+  if (ngtcp2_conn_in_closing_period(c->conn) ||
+      ngtcp2_conn_in_draining_period(c->conn)) {
+    goto fin;
+  }
+
+  ngtcp2_path_storage_zero(&ps);
+
+  nwrite = ngtcp2_conn_write_connection_close(
+    c->conn, &ps.path, &pi, buf, sizeof(buf), &c->last_error, timestamp());
+  if (nwrite < 0) {
+    fprintf(stderr, "ngtcp2_conn_write_connection_close: %s\n",
+            ngtcp2_strerror((int)nwrite));
+    goto fin;
+  }
+
+  client_send_packet(c, buf, (size_t)nwrite);
+
+fin:
+  ev_break(EV_DEFAULT, EVBREAK_ALL);
+}
+
+static void read_cb(struct ev_loop *loop, ev_io *w, int revents) {
+  struct client *c = w->data;
+  (void)loop;
+  (void)revents;
+
+  if (client_read(c) != 0) {
+    client_close(c);
+    return;
+  }
+
+  if (client_write(c) != 0) {
+    client_close(c);
+  }
+}
+
+static void timer_cb(struct ev_loop *loop, ev_timer *w, int revents) {
+  struct client *c = w->data;
+  (void)loop;
+  (void)revents;
+
+  if (client_handle_expiry(c) != 0) {
+    client_close(c);
+    return;
+  }
+
+  if (client_write(c) != 0) {
+    client_close(c);
+  }
+}
+*/
+
+static ngtcp2_conn *get_conn(ngtcp2_crypto_conn_ref *conn_ref) {
+  struct client *c = conn_ref->user_data;
+  return c->conn;
+}
+
+static int client_init(struct client *c) {
+  struct sockaddr_storage remote_addr, local_addr;
+  socklen_t remote_addrlen, local_addrlen = sizeof(local_addr);
+  printf("in client init\n");
+  memset(c, 0, sizeof(*c));
+
+  ngtcp2_ccerr_default(&c->last_error);
+
+  c->fd = create_sock((struct sockaddr *)&remote_addr, &remote_addrlen,
+                      REMOTE_HOST, REMOTE_PORT);
+  if (c->fd == -1) {
+    return -1;
+  }
+
+  if (connect_sock((struct sockaddr *)&local_addr, &local_addrlen, c->fd,
+                   (struct sockaddr *)&remote_addr, remote_addrlen) != 0) {
+    return -1;
+  }
+
+  memcpy(&c->local_addr, &local_addr, sizeof(c->local_addr));
+  c->local_addrlen = local_addrlen;
+
+  if (client_ssl_init(c) != 0) {
+    return -1;
+  }
+
+  if (client_quic_init(c, (struct sockaddr *)&remote_addr, remote_addrlen,
+                       (struct sockaddr *)&local_addr, local_addrlen) != 0) {
+    return -1;
+  }
+
+  c->stream.stream_id = -1;
+
+  c->conn_ref.get_conn = get_conn;
+  c->conn_ref.user_data = c;
+  
+  /*
+  ev_io_init(&c->rev, read_cb, c->fd, EV_READ);
+  c->rev.data = c;
+  ev_io_start(EV_DEFAULT, &c->rev);
+
+  ev_timer_init(&c->timer, timer_cb, 0., 0.);
+  c->timer.data = c;
+  */
+
+  return 0;
+}
+
+static void client_free(struct client *c) {
+  ngtcp2_conn_del(c->conn);
+  wolfSSL_free(c->ssl);
+  wolfSSL_CTX_free(c->ssl_ctx);
+}
+
+int quic_init_client() {
+  printf("at the beginnging of init client\n");
+  struct client c;
+  printf("declared struct\n");
+
+  srandom((unsigned int)timestamp());
+  printf("creating client\n ");
+  if (client_init(&c) != 0) {
+    exit(EXIT_FAILURE);
+  }
+ 
+  /*
+  if (client_write(&c) != 0) {
+    exit(EXIT_FAILURE);
+  }
+  */
+  
+
+  //ev_run(EV_DEFAULT, 0);
+
+  //client_free(&c);
+
+  return 0;
 }

@@ -61,9 +61,6 @@ idf_component_register(
 
 message(STATUS "finished idf component register for ngtcp2 component")
 
-
-
-
 add_compile_definitions(OPENSSL_ALL)
 add_compile_definitions(OPENSSL_EXTRA)
 add_compile_definitions(OPENSSL_EXTRA_X509_SMALL)

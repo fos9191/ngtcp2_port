@@ -538,7 +538,7 @@ int ngtcp2_crypto_wolfssl_configure_server_context(WOLFSSL_CTX *ssl_ctx) {
 
 int ngtcp2_crypto_wolfssl_configure_client_context(WOLFSSL_CTX *ssl_ctx) {
   crypto_wolfssl_configure_context(ssl_ctx);
-  wolfSSL_CTX_UseSessionTicket(ssl_ctx);
+  //wolfSSL_CTX_UseSessionTicket(ssl_ctx);
 #if PRINTF_DEBUG
   wolfSSL_Debugging_ON();
 #endif /* PRINTF_DEBUG */

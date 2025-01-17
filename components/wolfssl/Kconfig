@@ -476,6 +476,13 @@ menu "wolfSSH"
         default n
         help
             Enable wolfSSH debugging macro. See user_settings.h
+    
+    config WOLFSSL_SESSION_TICKET
+        bool "Enable Session Tickets"
+        default y
+        help
+            Enables support for TLS session tickets in WolfSSL.
+  
 
 endmenu # wolfSSH
 # ---------------------------------------------------------------------------------------------------------------------
