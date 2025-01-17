@@ -11,6 +11,21 @@
 
 static const char* TAG = "app_main";
 
+#ifdef WOLFSSL_USER_SETTINGS
+    #include <wolfssl/wolfcrypt/settings.h>
+    #ifndef WOLFSSL_ESPIDF
+        #warning "Problem with wolfSSL user_settings."
+        #warning "Check components/wolfssl/include"
+    #endif
+    #include <wolfssl/wolfcrypt/port/Espressif/esp32-crypt.h>
+#else
+    /* Define WOLFSSL_USER_SETTINGS project wide for settings.h to include   */
+    /* wolfSSL user settings in ./components/wolfssl/include/user_settings.h */
+    #error "Missing WOLFSSL_USER_SETTINGS in CMakeLists or Makefile:\
+    CFLAGS +=-DWOLFSSL_USER_SETTINGS"
+#endif
+
+
 void app_main(void) {
     // Initialize wolfSSL library
     wolfSSL_Init();
@@ -37,6 +52,12 @@ void app_main(void) {
     
     ESP_ERROR_CHECK(nvs_flash_init());
     
+    #ifdef OPENSSL_EXTRA
+        printf("OPENSSL_EXTRA is defined.\n");
+    #else
+        printf("OPENSSL_EXTRA is NOT defined.\n");
+    #endif
+
     ret = wifi_init_sta();
         while (ret != 0) {
             ESP_LOGI(TAG, "Waiting...");
@@ -44,6 +65,8 @@ void app_main(void) {
             ESP_LOGI(TAG, "Trying WiFi again...");
             ret = wifi_init_sta();
         }
+
+    
 
     quic_init_client();
 

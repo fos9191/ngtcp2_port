@@ -26,6 +26,8 @@
 #  include <config.h>
 #endif /* defined(HAVE_CONFIG_H) */
 
+#include <esp_log.h>
+
 #include <time.h>
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -48,7 +50,12 @@
 
 // must include wolfssl/settings.h before any other wolfssl files
 #include <wolfssl/wolfcrypt/settings.h> 
-#include <wolfssl/ssl.h>
+#include <wolfssl/openssl/ssl.h>
+
+#ifndef WOLFSSL_ESPIDF
+    #warning "Problem with wolfSSL user_settings."
+    #warning "Check components/wolfssl/include"
+#endif
 
 //#include <ev.h>
 
@@ -78,6 +85,7 @@ static uint64_t timestamp(void) {
   return (uint64_t)tp.tv_sec * NGTCP2_SECONDS + (uint64_t)tp.tv_nsec;
 }
 
+/*
 int RAND_bytes(unsigned char *buffer, int num) {
     // Initialize the random seed only once (if it's not already done)
     static int initialized = 0;
@@ -93,6 +101,8 @@ int RAND_bytes(unsigned char *buffer, int num) {
     
     return 1;  // Indicate success
 }
+*/
+
 
 static int create_sock(struct sockaddr *addr, socklen_t *paddrlen,
                        const char *host, const char *port) {
@@ -190,6 +200,7 @@ static int client_ssl_init(struct client *c) {
   c->ssl_ctx = wolfSSL_CTX_new(wolfSSLv23_client_method());
   if (!c->ssl_ctx) {
     //fprintf(stderr, "SSL_CTX_new: %s\n",ERR_error_string(ERR_get_error(), NULL));
+    fprintf(stderr, "error with wolfSSL_CTX_new\n");
     return -1;
   }
 
@@ -201,8 +212,15 @@ static int client_ssl_init(struct client *c) {
   c->ssl = wolfSSL_new(c->ssl_ctx);
   if (!c->ssl) {
     //fprintf(stderr, "SSL_new: %s\n", ERR_error_string(ERR_get_error(), NULL));
+    fprintf(stderr, "error with wolfSSL_new\n");
     return -1;
   }
+  
+  #ifdef OPENSSL_EXTRA
+      printf("OPENSSL_EXTRA is defined.\n");
+  #else
+      printf("OPENSSL_EXTRA is NOT defined.\n");
+  #endif
   
   /*
   SSL_set_app_data(c->ssl, &c->conn_ref);
@@ -212,6 +230,7 @@ static int client_ssl_init(struct client *c) {
     SSL_set_tlsext_host_name(c->ssl, REMOTE_HOST);
   }
   */
+  
 
   return 0;
 }

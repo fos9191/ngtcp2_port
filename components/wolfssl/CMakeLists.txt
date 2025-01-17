@@ -1042,6 +1042,7 @@ message(STATUS "setting wolfssl config")
 set(WOLFSSL_CONFIG_OPTIONS "--enable-all --enable-aesni --enable-harden --enable-keylog-export --disable-ech --enable-quic")
 message(STATUS "wolfssl config set")
 
+message("CMAKE_C_FLAGS at the end of wolfssl CMake: ${CMAKE_C_FLAGS}")
 
 message(STATUS "************************************************************************************************")
 message(STATUS "wolfSSL component config complete!")

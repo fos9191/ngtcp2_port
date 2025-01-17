@@ -1040,3 +1040,7 @@ Turn on timer debugging (used when CPU cycles not available)
  *  #define HAVE_AES_ECB
  *  #define HAVE_AES_DIRECT
  */
+
+
+#define OPENSSL_EXTRA
+

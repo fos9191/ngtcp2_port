@@ -35,6 +35,8 @@ message(STATUS "****************************************************************
 cmake_minimum_required(VERSION 3.20)
 cmake_policy(SET CMP0063 NEW)
 
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DWOLFSSL_USER_SETTINGS")
+
 # TODO : strip this down so only include wolfssl in the crypto etc
 #set(COMPONENT_NAME ngtcp2)
 
@@ -137,6 +139,8 @@ message(STATUS "summary of build options:
       Libbrotlienc:   ${HAVE_LIBBROTLIENC} (LIBS='${LIBBROTLIENC_LIBRARIES}')
       Libbrotlidec:   ${HAVE_LIBBROTLIDEC} (LIBS='${LIBBROTLIDEC_LIBRARIES}')
 ")
+
+message("CMAKE_C_FLAGS the end of ngtcp2 Cmake: ${CMAKE_C_FLAGS}")
 
 
 message(STATUS "************************************************************************************************")

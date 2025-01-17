@@ -4,6 +4,9 @@
 # CMakeLists in this exact order for cmake to work correctly
 cmake_minimum_required(VERSION 3.16)
 
+# IMPORTANT : keep this at the top of the global CMakeLists.txt - it ensures that user_settings.h is pulled in for wolfssl 
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DWOLFSSL_USER_SETTINGS")
+
 if(WIN32)
     # Windows-specific configuration here
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DWOLFSSL_CMAKE_SYSTEM_NAME_WINDOWS")
@@ -65,4 +68,5 @@ add_definitions(-DWOLFSSL_ESPWROOM32)
 
 set(WOLFSSL_QUIC TRUE)  
 
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DWOLFSSL_USER_SETTINGS")
+message("CMAKE_C_FLAGS at the end of global Cmake: ${CMAKE_C_FLAGS}")
+
