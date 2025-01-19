@@ -310,7 +310,9 @@
  * Memory requirement is about 5KB, otherwise 20K is needed when not specified.
  * If extra small footprint is needed, try MICRO_SESSION_CACHE (< 1K)
  * When really desperate or no TLS used, try NO_SESSION_CACHE.  */
-#define NO_SESSION_CACHE
+
+// MINE: undefining no_session_cache so that internal.c functions are compiled 
+//#define NO_SESSION_CACHE
 
 /* Small Stack uses more heap. */
 #define WOLFSSL_SMALL_STACK
@@ -1041,6 +1043,13 @@ Turn on timer debugging (used when CPU cycles not available)
  *  #define HAVE_AES_DIRECT
  */
 
-
+#undef  WOLFSSL_ESPIDF
+#define WOLFSSL_ESPIDF
 #define OPENSSL_EXTRA
+#define OPENSSL_ALL
+#undef HAVE_SESSION_TICKET
+#define HAVE_SESSION_TICKET
+#undef WOLFSSL_SSL_SESS_INCLUDED
+#define WOLFSSL_SSL_SESS_INCLUDED
+#define HAVE_ALPN
 

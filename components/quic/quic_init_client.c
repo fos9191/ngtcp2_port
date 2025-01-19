@@ -51,6 +51,8 @@
 // must include wolfssl/settings.h before any other wolfssl files
 #include <wolfssl/wolfcrypt/settings.h> 
 #include <wolfssl/openssl/ssl.h>
+#include <wolfssl/ssl.h>
+#include <wolfssl/wolfcrypt/port/Espressif/esp32-crypt.h>
 
 #ifndef WOLFSSL_ESPIDF
     #warning "Problem with wolfSSL user_settings."
@@ -59,10 +61,12 @@
 
 //#include <ev.h>
 
-#define REMOTE_HOST "127.0.0.1"
-#define REMOTE_PORT "4433"
-#define ALPN "\xahq-interop"
-#define MESSAGE "GET /\r\n"
+#define REMOTE_HOST "www.google.com"
+#define REMOTE_PORT "443"
+#define ALPN "\x2h3"
+//#define MESSAGE "GET /\r\n"
+
+static const char *TAG = "quic_init";
 
 /*
  * Example 1: Handshake with www.google.com
@@ -81,7 +85,8 @@ static uint64_t timestamp(void) {
     fprintf(stderr, "clock_gettime: %s\n", strerror(errno));
     exit(EXIT_FAILURE);
   }
-
+  //used to check timestamp works
+  //fprintf(stderr, "Timestamp: %lld seconds, %ld nanoseconds\n", tp.tv_sec, tp.tv_nsec);
   return (uint64_t)tp.tv_sec * NGTCP2_SECONDS + (uint64_t)tp.tv_nsec;
 }
 
@@ -215,23 +220,15 @@ static int client_ssl_init(struct client *c) {
     fprintf(stderr, "error with wolfSSL_new\n");
     return -1;
   }
-  
-  #ifdef OPENSSL_EXTRA
-      printf("OPENSSL_EXTRA is defined.\n");
-  #else
-      printf("OPENSSL_EXTRA is NOT defined.\n");
-  #endif
-  
-  /*
+
   SSL_set_app_data(c->ssl, &c->conn_ref);
   SSL_set_connect_state(c->ssl);
+  
   SSL_set_alpn_protos(c->ssl, (const unsigned char *)ALPN, sizeof(ALPN) - 1);
   if (!numeric_host(REMOTE_HOST)) {
     SSL_set_tlsext_host_name(c->ssl, REMOTE_HOST);
-  }
-  */
+  }   
   
-
   return 0;
 }
 
@@ -519,16 +516,21 @@ static int client_write_streams(struct client *c) {
 
   for (;;) {
     datavcnt = client_get_message(c, &stream_id, &fin, &datav, 1);
+    ESP_LOGW(TAG, "client_get_message worked");
 
     flags = NGTCP2_WRITE_STREAM_FLAG_MORE;
     if (fin) {
       flags |= NGTCP2_WRITE_STREAM_FLAG_FIN;
     }
 
+    
+
     nwrite = ngtcp2_conn_writev_stream(c->conn, &ps.path, &pi, buf, sizeof(buf),
                                        &wdatalen, flags, stream_id, &datav,
                                        datavcnt, ts);
+    
     if (nwrite < 0) {
+      printf("nwrite is less than 0\n");
       switch (nwrite) {
       case NGTCP2_ERR_WRITE_MORE:
         c->stream.nwrite += (size_t)wdatalen;
@@ -557,26 +559,29 @@ static int client_write_streams(struct client *c) {
   return 0;
 }
 
-/*
+
 static int client_write(struct client *c) {
   ngtcp2_tstamp expiry, now;
-  ev_tstamp t;
+  int64_t t;
+
+  
 
   if (client_write_streams(c) != 0) {
+    ESP_LOGE(TAG, "client_write_streams failed");
     return -1;
   }
 
   expiry = ngtcp2_conn_get_expiry(c->conn);
   now = timestamp();
 
-  t = expiry < now ? 1e-9 : (ev_tstamp)(expiry - now) / NGTCP2_SECONDS;
+  t = expiry < now ? 1e-9 : (expiry - now) / NGTCP2_SECONDS;
 
-  c->timer.repeat = t;
-  ev_timer_again(EV_DEFAULT, &c->timer);
+  //c->timer.repeat = t;
+  //esp_timer_start_once(&c->timer, t);
 
   return 0;
 }
-*/
+
 
 
 static int client_handle_expiry(struct client *c) {
@@ -656,7 +661,6 @@ static ngtcp2_conn *get_conn(ngtcp2_crypto_conn_ref *conn_ref) {
 static int client_init(struct client *c) {
   struct sockaddr_storage remote_addr, local_addr;
   socklen_t remote_addrlen, local_addrlen = sizeof(local_addr);
-  printf("in client init\n");
   memset(c, 0, sizeof(*c));
 
   ngtcp2_ccerr_default(&c->last_error);
@@ -708,21 +712,22 @@ static void client_free(struct client *c) {
 }
 
 int quic_init_client() {
-  printf("at the beginnging of init client\n");
+  ESP_LOGI(TAG, "beginning client init");
   struct client c;
-  printf("declared struct\n");
 
   srandom((unsigned int)timestamp());
-  printf("creating client\n ");
+  ESP_LOGI(TAG,"creating client");
   if (client_init(&c) != 0) {
     exit(EXIT_FAILURE);
+  } else {
+      ESP_LOGI(TAG,"client init successful");
   }
  
-  /*
   if (client_write(&c) != 0) {
     exit(EXIT_FAILURE);
+  } else {
+      ESP_LOGI(TAG,"client write successful");
   }
-  */
   
 
   //ev_run(EV_DEFAULT, 0);

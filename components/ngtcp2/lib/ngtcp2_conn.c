@@ -11695,7 +11695,7 @@ static ngtcp2_ssize conn_write_vmsg_wrapper(ngtcp2_conn *conn,
                                             ngtcp2_tstamp ts) {
   ngtcp2_conn_stat *cstat = &conn->cstat;
   ngtcp2_ssize nwrite;
-
+  
   nwrite = ngtcp2_conn_write_vmsg(conn, path, pkt_info_version, pi, dest,
                                   destlen, vmsg, ts);
   if (nwrite < 0) {
@@ -11731,15 +11731,20 @@ ngtcp2_ssize ngtcp2_conn_writev_stream_versioned(
   if (stream_id != -1) {
     strm = ngtcp2_conn_find_stream(conn, stream_id);
     if (strm == NULL) {
+                  printf("1");
       return NGTCP2_ERR_STREAM_NOT_FOUND;
     }
 
     if (strm->flags & NGTCP2_STRM_FLAG_SHUT_WR) {
+            printf("2");
+
       return NGTCP2_ERR_STREAM_SHUT_WR;
     }
 
     datalen = ngtcp2_vec_len_varint(datav, datavcnt);
     if (datalen == -1) {
+            printf("3");
+
       return NGTCP2_ERR_INVALID_ARGUMENT;
     }
 
@@ -11749,6 +11754,7 @@ ngtcp2_ssize ngtcp2_conn_writev_stream_versioned(
     } else {
       if ((uint64_t)datalen > NGTCP2_MAX_VARINT - strm->tx.offset ||
           (uint64_t)datalen > NGTCP2_MAX_VARINT - conn->tx.offset) {
+            printf("4");
         return NGTCP2_ERR_INVALID_ARGUMENT;
       }
 
@@ -11764,7 +11770,8 @@ ngtcp2_ssize ngtcp2_conn_writev_stream_versioned(
   } else {
     pvmsg = NULL;
   }
-
+  //i believe this is because the server is not setup so the client cannot write
+  printf("error callback failure from conn_write_vmsg_wrapper\n");
   return conn_write_vmsg_wrapper(conn, path, pkt_info_version, pi, dest,
                                  destlen, pvmsg, ts);
 }

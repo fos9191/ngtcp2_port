@@ -26,7 +26,7 @@ static const char* TAG = "app_main";
 #endif
 
 
-void app_main(void) {
+void app_main_logic(void) {
     // Initialize wolfSSL library
     wolfSSL_Init();
     esp_err_t ret = 0;
@@ -75,4 +75,14 @@ void app_main(void) {
     wolfSSL_CTX_free(ctx);
     wolfSSL_Cleanup();
     printf("wolfSSL cleaned up.\n");
+}
+
+void app_main_task(void *pvParameters) {
+    app_main_logic();  // This will call your app_main logic
+}
+
+#define MAIN_TASK_STACK_SIZE 8192
+
+void app_main(void){
+    xTaskCreate(app_main_task, "app_main_task", MAIN_TASK_STACK_SIZE, NULL, 5, NULL);
 }

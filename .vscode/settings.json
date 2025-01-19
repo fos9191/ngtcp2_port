@@ -9,7 +9,8 @@
         "quic_init_client.h": "c",
         "ngtcp2_conn.h": "c",
         "time.h": "c",
-        "ssl.h": "c"
+        "ssl.h": "c",
+        "esp32-crypt.h": "c"
     },
     "C_Cpp.errorSquiggles": "disabled"
 }
