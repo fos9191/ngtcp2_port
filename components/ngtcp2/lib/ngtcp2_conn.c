@@ -10139,7 +10139,7 @@ static ngtcp2_ssize conn_write_handshake(ngtcp2_conn *conn, ngtcp2_pkt_info *pi,
   uint64_t pending_early_datalen;
   ngtcp2_dcid *dcid;
   ngtcp2_preferred_addr *paddr;
-
+  
   switch (conn->state) {
   case NGTCP2_CS_CLIENT_INITIAL:
     pending_early_datalen = conn_retry_early_payloadlen(conn);
@@ -10151,6 +10151,7 @@ static ngtcp2_ssize conn_write_handshake(ngtcp2_conn *conn, ngtcp2_pkt_info *pi,
       nwrite =
         conn_write_client_initial(conn, pi, dest, destlen, write_datalen, ts);
       if (nwrite <= 0) {
+        printf("here -2 \n");
         return nwrite;
       }
     } else {
@@ -10174,7 +10175,6 @@ static ngtcp2_ssize conn_write_handshake(ngtcp2_conn *conn, ngtcp2_pkt_info *pi,
         return early_spktlen;
       }
     }
-
     conn->state = NGTCP2_CS_CLIENT_WAIT_HANDSHAKE;
 
     res = nwrite + early_spktlen;
@@ -10192,7 +10192,6 @@ static ngtcp2_ssize conn_write_handshake(ngtcp2_conn *conn, ngtcp2_pkt_info *pi,
           write_datalen = pending_early_datalen;
         }
       }
-
       nwrite =
         conn_write_handshake_pkts(conn, pi, dest, destlen, write_datalen, ts);
       if (nwrite < 0) {
@@ -10212,7 +10211,6 @@ static ngtcp2_ssize conn_write_handshake(ngtcp2_conn *conn, ngtcp2_pkt_info *pi,
         if (nwrite < 0) {
           return nwrite;
         }
-
         res += nwrite;
       }
 
@@ -10223,7 +10221,6 @@ static ngtcp2_ssize conn_write_handshake(ngtcp2_conn *conn, ngtcp2_pkt_info *pi,
         }
         res = nwrite;
       }
-
       return res;
     }
 
@@ -10421,7 +10418,6 @@ static ngtcp2_ssize conn_client_write_handshake(ngtcp2_conn *conn,
         !conn->early.ckm || (!send_stream && !send_datagram)) {
       return spktlen;
     }
-
     /* If spktlen > 0, we are making a compound packet.  If Initial
        packet is written, we have to pad bytes to 0-RTT packet. */
     version = conn->negotiated_version ? conn->negotiated_version
@@ -10444,7 +10440,6 @@ static ngtcp2_ssize conn_client_write_handshake(ngtcp2_conn *conn,
 
   dest += spktlen;
   destlen -= (size_t)spktlen;
-
   if (conn_cwnd_is_zero(conn)) {
     return spktlen;
   }
@@ -11711,7 +11706,6 @@ static ngtcp2_ssize conn_write_vmsg_wrapper(ngtcp2_conn *conn,
       conn->rst.app_limited = cstat->max_tx_udp_payload_size;
     }
   }
-
   return nwrite;
 }
 
@@ -11731,20 +11725,15 @@ ngtcp2_ssize ngtcp2_conn_writev_stream_versioned(
   if (stream_id != -1) {
     strm = ngtcp2_conn_find_stream(conn, stream_id);
     if (strm == NULL) {
-                  printf("1");
       return NGTCP2_ERR_STREAM_NOT_FOUND;
     }
 
     if (strm->flags & NGTCP2_STRM_FLAG_SHUT_WR) {
-            printf("2");
-
       return NGTCP2_ERR_STREAM_SHUT_WR;
     }
 
     datalen = ngtcp2_vec_len_varint(datav, datavcnt);
     if (datalen == -1) {
-            printf("3");
-
       return NGTCP2_ERR_INVALID_ARGUMENT;
     }
 
@@ -11770,8 +11759,7 @@ ngtcp2_ssize ngtcp2_conn_writev_stream_versioned(
   } else {
     pvmsg = NULL;
   }
-  //i believe this is because the server is not setup so the client cannot write
-  printf("error callback failure from conn_write_vmsg_wrapper\n");
+
   return conn_write_vmsg_wrapper(conn, path, pkt_info_version, pi, dest,
                                  destlen, pvmsg, ts);
 }
@@ -11893,7 +11881,7 @@ ngtcp2_ssize ngtcp2_conn_write_vmsg(ngtcp2_conn *conn, ngtcp2_path *path,
           NGTCP2_PKT_INITIAL) {
       wflags |= NGTCP2_WRITE_PKT_FLAG_REQUIRE_PADDING;
     }
-
+    printf("made ithereererere\n");
     res = nwrite;
     dest += nwrite;
     destlen -= (size_t)nwrite;

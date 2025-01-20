@@ -1352,10 +1352,11 @@ int ngtcp2_crypto_client_initial_cb(ngtcp2_conn *conn, void *user_data) {
   const ngtcp2_cid *dcid = ngtcp2_conn_get_dcid(conn);
   void *tls = ngtcp2_conn_get_tls_native_handle(conn);
   (void)user_data;
-
+  
   if (ngtcp2_crypto_derive_and_install_initial_key(
         conn, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
         ngtcp2_conn_get_client_chosen_version(conn), dcid) != 0) {
+           printf("Failed to derive and install initial key\n");
     return NGTCP2_ERR_CALLBACK_FAILURE;
   }
 

@@ -28,36 +28,14 @@ static const char* TAG = "app_main";
 
 void app_main_logic(void) {
     // Initialize wolfSSL library
-    wolfSSL_Init();
     esp_err_t ret = 0;
 
-    // Create a wolfSSL context
-    WOLFSSL_CTX *ctx = wolfSSL_CTX_new(wolfSSLv23_client_method());
-    if (ctx == NULL) {
-        printf("wolfSSL_CTX_new error\n");
-        wolfSSL_Cleanup();
-        return;
-    }
-    printf("wolfSSL context created successfully.\n");
-
-    /*
-    esp_err_t ret = wifi_init_sta();
-    while (ret != 0) {
-        vTaskDelay(60000 / portTICK_PERIOD_MS);
-        ret = wifi_init_sta();
-    } 
-    */
-           
     //ngtcp2_path path = set_ngtcp2_path("192.168.1.2", "192.168.1.1", 12345, 443);
     
+    // initialise the flash - used to store wifi credentials
     ESP_ERROR_CHECK(nvs_flash_init());
-    
-    #ifdef OPENSSL_EXTRA
-        printf("OPENSSL_EXTRA is defined.\n");
-    #else
-        printf("OPENSSL_EXTRA is NOT defined.\n");
-    #endif
 
+    // connect to wifi
     ret = wifi_init_sta();
         while (ret != 0) {
             ESP_LOGI(TAG, "Waiting...");
@@ -67,21 +45,20 @@ void app_main_logic(void) {
         }
 
     
+    /*
+    intialise quic client - this currently sets up the quic client object and
+    performs a handshake with google.com (as an example)
+    */ 
 
-    quic_init_client();
-
-    //quic_client_cleanup();
-    
-    wolfSSL_CTX_free(ctx);
-    wolfSSL_Cleanup();
-    printf("wolfSSL cleaned up.\n");
+    quic_init_client();    
 }
 
 void app_main_task(void *pvParameters) {
     app_main_logic();  // This will call your app_main logic
+    vTaskDelete(NULL);
 }
 
-#define MAIN_TASK_STACK_SIZE 8192
+#define MAIN_TASK_STACK_SIZE 16384
 
 void app_main(void){
     xTaskCreate(app_main_task, "app_main_task", MAIN_TASK_STACK_SIZE, NULL, 5, NULL);

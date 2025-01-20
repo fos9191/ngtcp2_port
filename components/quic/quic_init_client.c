@@ -516,7 +516,6 @@ static int client_write_streams(struct client *c) {
 
   for (;;) {
     datavcnt = client_get_message(c, &stream_id, &fin, &datav, 1);
-    ESP_LOGW(TAG, "client_get_message worked");
 
     flags = NGTCP2_WRITE_STREAM_FLAG_MORE;
     if (fin) {
@@ -530,7 +529,6 @@ static int client_write_streams(struct client *c) {
                                        datavcnt, ts);
     
     if (nwrite < 0) {
-      printf("nwrite is less than 0\n");
       switch (nwrite) {
       case NGTCP2_ERR_WRITE_MORE:
         c->stream.nwrite += (size_t)wdatalen;
@@ -719,15 +717,11 @@ int quic_init_client() {
   ESP_LOGI(TAG,"creating client");
   if (client_init(&c) != 0) {
     exit(EXIT_FAILURE);
-  } else {
-      ESP_LOGI(TAG,"client init successful");
-  }
+  } 
  
   if (client_write(&c) != 0) {
     exit(EXIT_FAILURE);
-  } else {
-      ESP_LOGI(TAG,"client write successful");
-  }
+  } 
   
 
   //ev_run(EV_DEFAULT, 0);

@@ -1053,3 +1053,7 @@ Turn on timer debugging (used when CPU cycles not available)
 #define WOLFSSL_SSL_SESS_INCLUDED
 #define HAVE_ALPN
 
+#define WOLFSSL_AES_DIRECT
+#define HAVE_EX_DATA
+#define HAVE_ED25519
+#define HAVE_SUPPORTED_CURVES
