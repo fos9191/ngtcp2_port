@@ -49,12 +49,12 @@ void app_main_logic(void) {
     intialise quic client - this currently sets up the quic client object and
     performs a handshake with google.com (as an example)
     */ 
-
     quic_init_client();    
+
 }
 
 void app_main_task(void *pvParameters) {
-    app_main_logic();  // This will call your app_main logic
+    app_main_logic();  // calls the main application logic
     vTaskDelete(NULL);
 }
 

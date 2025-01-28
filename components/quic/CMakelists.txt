@@ -1,5 +1,5 @@
 idf_component_register(
     SRC_DIRS "."
     INCLUDE_DIRS "include"
-    PRIV_REQUIRES wolfssl ngtcp2 lwip
+    PRIV_REQUIRES wolfssl ngtcp2 lwip esp_timer
 )

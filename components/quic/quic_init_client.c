@@ -27,6 +27,8 @@
 #endif /* defined(HAVE_CONFIG_H) */
 
 #include <esp_log.h>
+#include "esp_event.h"
+#include <esp_timer.h>
 
 #include <time.h>
 #include <sys/types.h>
@@ -66,7 +68,12 @@
 #define ALPN "\x2h3"
 //#define MESSAGE "GET /\r\n"
 
-static const char *TAG = "quic_init";
+static const char *TAG = "quic_client_init";
+
+// define esp event base for event management
+ESP_EVENT_DEFINE_BASE(MY_EVENT_BASE);
+#define MY_EVENT_ID_READ 0
+
 
 /*
  * Example 1: Handshake with www.google.com
@@ -132,6 +139,7 @@ static int create_sock(struct sockaddr *addr, socklen_t *paddrlen,
       continue;
     }
 
+    ESP_LOGI(TAG, "Socket created successfully with fd: %d\n", fd);
     break;
   }
 
@@ -523,10 +531,11 @@ static int client_write_streams(struct client *c) {
     }
 
     
-
+    ESP_LOGI(TAG, "writing to stream");
     nwrite = ngtcp2_conn_writev_stream(c->conn, &ps.path, &pi, buf, sizeof(buf),
                                        &wdatalen, flags, stream_id, &datav,
                                        datavcnt, ts);
+    ESP_LOGI(TAG, "nwrite value: %d", nwrite);
     
     if (nwrite < 0) {
       switch (nwrite) {
@@ -651,9 +660,75 @@ static void timer_cb(struct ev_loop *loop, ev_timer *w, int revents) {
 }
 */
 
+// my read_cb function to test reading from the socket
+static void read_cb(struct client *c) {
+  ESP_LOGI(TAG, "read_cb called to read from socket");
+    // Check if there is data to read from the client
+    if (client_read(c) != 0) {
+        ESP_LOGE("read_cb", "Error reading from client.");
+        //client_close(c);
+        return;
+    }
+
+    // If reading was successful, attempt to write back to the client
+    if (client_write(c) != 0) {
+        ESP_LOGE("read_cb", "Error writing to client.");
+        //client_close(c);
+    }
+}
+
 static ngtcp2_conn *get_conn(ngtcp2_crypto_conn_ref *conn_ref) {
   struct client *c = conn_ref->user_data;
   return c->conn;
+}
+
+// this function should read from the socket (c->fd)
+void socket_read_task(void *param) {
+    struct client *c = (struct client *)param;
+    fd_set read_fds;
+    struct timeval timeout;
+
+    if (c->fd < 0) {
+        printf("Invalid file descriptor: %d\n", c->fd);
+        return;
+    }
+    int nfds = c->fd + 1;
+    printf("File Descriptor: %d\n", c->fd);    
+
+    int flags = fcntl(c->fd, F_GETFL, 0);
+    if (flags & O_NONBLOCK) {
+        ESP_LOGI(TAG, "Socket is in non-blocking mode");
+    } else {
+      ESP_LOGI(TAG, "Socket is in blocking mode");
+    }
+
+    while (1) {
+        FD_ZERO(&read_fds);
+        printf("File Descriptor 2: %d\n", c->fd);    
+        FD_SET(c->fd, &read_fds);
+        printf("File Descriptor 3: %d\n", c->fd);    
+
+        timeout.tv_sec = 1;  // 1-second timeout
+        timeout.tv_usec = 0;
+        
+        //printf("fd_isset is : %ld\n", FD_ISSET(c->fd, &read_fds));
+        int ret = lwip_select(c->fd + 1, &read_fds, NULL, NULL, &timeout);
+        printf("ret value is :%d\n", ret);
+        printf("fd_isset is : %ld\n", FD_ISSET(c->fd, &read_fds));
+        printf("File Descriptor 4: %d\n", c->fd);    
+        if (ret > 0) {
+            printf("read_cb called from socket_read_task\n");
+            read_cb(c); // read from socket
+        } /*else if (ret == 0) {
+            printf("No data received within the timeout period\n");
+        } else {
+            printf("Error occurred in lwip_select: %d\n", errno);
+        } */
+
+        vTaskDelay(pdMS_TO_TICKS(10));  // Delay for 10ms so that we yield to scheduler
+    }
+
+    vTaskDelete(NULL);
 }
 
 static int client_init(struct client *c) {
@@ -692,6 +767,10 @@ static int client_init(struct client *c) {
   c->conn_ref.user_data = c;
   
   /*
+  this code initializes and starts an I/O watcher on a file descriptor (c->fd) 
+  to monitor for readability. When data becomes available on this file descriptor, 
+  the specified callback (read_cb) will be invoked.
+
   ev_io_init(&c->rev, read_cb, c->fd, EV_READ);
   c->rev.data = c;
   ev_io_start(EV_DEFAULT, &c->rev);
@@ -699,6 +778,9 @@ static int client_init(struct client *c) {
   ev_timer_init(&c->timer, timer_cb, 0., 0.);
   c->timer.data = c;
   */
+
+  //task created to watch socket for incoming packets 
+  xTaskCreate(socket_read_task, "socket_read_task", 8192, c, 5, NULL);
 
   return 0;
 }
@@ -712,16 +794,31 @@ static void client_free(struct client *c) {
 int quic_init_client() {
   ESP_LOGI(TAG, "beginning client init");
   struct client c;
-
+  
   srandom((unsigned int)timestamp());
-  ESP_LOGI(TAG,"creating client");
+  ESP_LOGI(TAG,"creating QUIC client");
   if (client_init(&c) != 0) {
     exit(EXIT_FAILURE);
   } 
- 
+
+
+  ESP_LOGI(TAG, "writing to QUIC client connection");
   if (client_write(&c) != 0) {
     exit(EXIT_FAILURE);
   } 
+
+  while (1) {
+    //needed so function doesnt return and task stays open - hence memory not corrupted
+  }
+  /* this works ! as in it reads a packet but logic surrounding it is not correct
+  vTaskDelay(500 / portTICK_PERIOD_MS);  // Wait for 100 milliseconds
+  ESP_LOGI(TAG, "trying to read from main");
+  if (client_read(&c) != 0) {
+      ESP_LOGE("read_cb", "Error reading from client.");
+      //client_close(c);
+      exit(EXIT_FAILURE);
+  }
+  */
   
 
   //ev_run(EV_DEFAULT, 0);
