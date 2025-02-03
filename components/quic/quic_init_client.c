@@ -84,6 +84,9 @@ ESP_EVENT_DEFINE_BASE(MY_EVENT_BASE);
  *
  * and undefine MESSAGE macro.
  */
+#include "esp_heap_caps.h"
+
+
 
 static uint64_t timestamp(void) {
   struct timespec tp;
@@ -209,7 +212,23 @@ static int numeric_host(const char *hostname) {
          numeric_host_family(hostname, AF_INET6);
 }
 
+#include <stdio.h>
+#include <time.h>
+
+void print_system_time() {
+    time_t now;
+    struct tm timeinfo;
+
+    time(&now);
+    localtime_r(&now, &timeinfo);
+
+    printf("Current time: %04d-%02d-%02d %02d:%02d:%02d\n",
+           timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday,
+           timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
+}
+
 static int client_ssl_init(struct client *c) {
+  ESP_LOGI(TAG, "WolfSSL client init");
   c->ssl_ctx = wolfSSL_CTX_new(wolfSSLv23_client_method());
   if (!c->ssl_ctx) {
     //fprintf(stderr, "SSL_CTX_new: %s\n",ERR_error_string(ERR_get_error(), NULL));
@@ -217,6 +236,54 @@ static int client_ssl_init(struct client *c) {
     return -1;
   }
 
+  //load the CA cert from google.com - got using openssl 
+  const char promCert[] = \
+                        "-----BEGIN CERTIFICATE-----\n" \
+                        "MIIFYjCCBEqgAwIBAgIQd70NbNs2+RrqIQ/E8FjTDTANBgkqhkiG9w0BAQsFADBX\n" \
+                        "MQswCQYDVQQGEwJCRTEZMBcGA1UEChMQR2xvYmFsU2lnbiBudi1zYTEQMA4GA1UE\n" \
+                        "CxMHUm9vdCBDQTEbMBkGA1UEAxMSR2xvYmFsU2lnbiBSb290IENBMB4XDTIwMDYx\n" \
+                        "OTAwMDA0MloXDTI4MDEyODAwMDA0MlowRzELMAkGA1UEBhMCVVMxIjAgBgNVBAoT\n" \
+                        "GUdvb2dsZSBUcnVzdCBTZXJ2aWNlcyBMTEMxFDASBgNVBAMTC0dUUyBSb290IFIx\n" \
+                        "MIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEAthECix7joXebO9y/lD63\n" \
+                        "ladAPKH9gvl9MgaCcfb2jH/76Nu8ai6Xl6OMS/kr9rH5zoQdsfnFl97vufKj6bwS\n" \
+                        "iV6nqlKr+CMny6SxnGPb15l+8Ape62im9MZaRw1NEDPjTrETo8gYbEvs/AmQ351k\n" \
+                        "KSUjB6G00j0uYODP0gmHu81I8E3CwnqIiru6z1kZ1q+PsAewnjHxgsHA3y6mbWwZ\n" \
+                        "DrXYfiYaRQM9sHmklCitD38m5agI/pboPGiUU+6DOogrFZYJsuB6jC511pzrp1Zk\n" \
+                        "j5ZPaK49l8KEj8C8QMALXL32h7M1bKwYUH+E4EzNktMg6TO8UpmvMrUpsyUqtEj5\n" \
+                        "cuHKZPfmghCN6J3Cioj6OGaK/GP5Afl4/Xtcd/p2h/rs37EOeZVXtL0m79YB0esW\n" \
+                        "CruOC7XFxYpVq9Os6pFLKcwZpDIlTirxZUTQAs6qzkm06p98g7BAe+dDq6dso499\n" \
+                        "iYH6TKX/1Y7DzkvgtdizjkXPdsDtQCv9Uw+wp9U7DbGKogPeMa3Md+pvez7W35Ei\n" \
+                        "Eua++tgy/BBjFFFy3l3WFpO9KWgz7zpm7AeKJt8T11dleCfeXkkUAKIAf5qoIbap\n" \
+                        "sZWwpbkNFhHax2xIPEDgfg1azVY80ZcFuctL7TlLnMQ/0lUTbiSw1nH69MG6zO0b\n" \
+                        "9f6BQdgAmD06yK56mDcYBZUCAwEAAaOCATgwggE0MA4GA1UdDwEB/wQEAwIBhjAP\n" \
+                        "BgNVHRMBAf8EBTADAQH/MB0GA1UdDgQWBBTkrysmcRorSCeFL1JmLO/wiRNxPjAf\n" \
+                        "BgNVHSMEGDAWgBRge2YaRQ2XyolQL30EzTSo//z9SzBgBggrBgEFBQcBAQRUMFIw\n" \
+                        "JQYIKwYBBQUHMAGGGWh0dHA6Ly9vY3NwLnBraS5nb29nL2dzcjEwKQYIKwYBBQUH\n" \
+                        "MAKGHWh0dHA6Ly9wa2kuZ29vZy9nc3IxL2dzcjEuY3J0MDIGA1UdHwQrMCkwJ6Al\n" \
+                        "oCOGIWh0dHA6Ly9jcmwucGtpLmdvb2cvZ3NyMS9nc3IxLmNybDA7BgNVHSAENDAy\n" \
+                        "MAgGBmeBDAECATAIBgZngQwBAgIwDQYLKwYBBAHWeQIFAwIwDQYLKwYBBAHWeQIF\n" \
+                        "AwMwDQYJKoZIhvcNAQELBQADggEBADSkHrEoo9C0dhemMXoh6dFSPsjbdBZBiLg9\n" \
+                        "NR3t5P+T4Vxfq7vqfM/b5A3Ri1fyJm9bvhdGaJQ3b2t6yMAYN/olUazsaL+yyEn9\n" \
+                        "WprKASOshIArAoyZl+tJaox118fessmXn1hIVw41oeQa1v1vg4Fv74zPl6/AhSrw\n" \
+                        "9U5pCZEt4Wi4wStz6dTZ/CLANx8LZh1J7QJVj2fhMtfTJr9w4z30Z209fOU0iOMy\n" \
+                        "+qduBmpvvYuR7hZL6Dupszfnw0Skfths18dG9ZKb59UhvmaSGZRVbNQpsg3BZlvi\n" \
+                        "d0lIKO2d1xozclOzgjXPYovJJIultzkMu34qQb9Sz/yilrbCgj8=\n" \
+                        "-----END CERTIFICATE-----\n";
+  print_system_time();
+  if (wolfSSL_CTX_load_verify_buffer(c->ssl_ctx, (const byte*)promCert, strlen(promCert), WOLFSSL_FILETYPE_PEM) != WOLFSSL_SUCCESS) {
+      fprintf(stderr, "error loading CA certificate\n");
+      return -1;
+  }
+  printf("FP_MAX_BITS is set to: %d\n", FP_MAX_BITS);
+  /*
+  int ret = wolfSSL_CTX_use_certificate_chain_file(ctx, "path/to/your/certificate_chain.pem");
+    if (ret != WOLFSSL_SUCCESS) {
+        printf("Error loading certificate chain\n");
+        wolfSSL_CTX_free(ctx);
+        return -1;
+    }
+  */
+  
   if (ngtcp2_crypto_wolfssl_configure_client_context(c->ssl_ctx) != 0) {
     fprintf(stderr, "ngtcp2_crypto_wolfssl_configure_client_context failed\n");
     return -1;
@@ -424,7 +491,7 @@ static int client_read(struct client *c) {
   msg.msg_name = &addr;
   msg.msg_iov = &iov;
   msg.msg_iovlen = 1;
-
+  
   for (;;) {
     msg.msg_namelen = sizeof(addr);
 
@@ -442,7 +509,7 @@ static int client_read(struct client *c) {
     path.local.addr = (struct sockaddr *)&c->local_addr;
     path.remote.addrlen = msg.msg_namelen;
     path.remote.addr = msg.msg_name;
-
+    printf("calling ngtcp2_conn_read_pkt\n");
     rv = ngtcp2_conn_read_pkt(c->conn, &path, &pi, buf, (size_t)nread,
                               timestamp());
     if (rv != 0) {
@@ -535,7 +602,6 @@ static int client_write_streams(struct client *c) {
     nwrite = ngtcp2_conn_writev_stream(c->conn, &ps.path, &pi, buf, sizeof(buf),
                                        &wdatalen, flags, stream_id, &datav,
                                        datavcnt, ts);
-    ESP_LOGI(TAG, "nwrite value: %d", nwrite);
     
     if (nwrite < 0) {
       switch (nwrite) {
@@ -601,7 +667,7 @@ static int client_handle_expiry(struct client *c) {
   return 0;
 }
 
-/*
+
 static void client_close(struct client *c) {
   ngtcp2_ssize nwrite;
   ngtcp2_pkt_info pi;
@@ -626,9 +692,11 @@ static void client_close(struct client *c) {
   client_send_packet(c, buf, (size_t)nwrite);
 
 fin:
-  ev_break(EV_DEFAULT, EVBREAK_ALL);
+  //ev_break(EV_DEFAULT, EVBREAK_ALL);
+  return;
 }
 
+/*
 static void read_cb(struct ev_loop *loop, ev_io *w, int revents) {
   struct client *c = w->data;
   (void)loop;
@@ -662,11 +730,10 @@ static void timer_cb(struct ev_loop *loop, ev_timer *w, int revents) {
 
 // my read_cb function to test reading from the socket
 static void read_cb(struct client *c) {
-  ESP_LOGI(TAG, "read_cb called to read from socket");
     // Check if there is data to read from the client
     if (client_read(c) != 0) {
         ESP_LOGE("read_cb", "Error reading from client.");
-        //client_close(c);
+        client_close(c);
         return;
     }
 
@@ -692,8 +759,6 @@ void socket_read_task(void *param) {
         printf("Invalid file descriptor: %d\n", c->fd);
         return;
     }
-    int nfds = c->fd + 1;
-    printf("File Descriptor: %d\n", c->fd);    
 
     int flags = fcntl(c->fd, F_GETFL, 0);
     if (flags & O_NONBLOCK) {
@@ -704,28 +769,19 @@ void socket_read_task(void *param) {
 
     while (1) {
         FD_ZERO(&read_fds);
-        printf("File Descriptor 2: %d\n", c->fd);    
         FD_SET(c->fd, &read_fds);
-        printf("File Descriptor 3: %d\n", c->fd);    
 
-        timeout.tv_sec = 1;  // 1-second timeout
+        timeout.tv_sec = 1;  // ?? why
         timeout.tv_usec = 0;
         
         //printf("fd_isset is : %ld\n", FD_ISSET(c->fd, &read_fds));
         int ret = lwip_select(c->fd + 1, &read_fds, NULL, NULL, &timeout);
-        printf("ret value is :%d\n", ret);
-        printf("fd_isset is : %ld\n", FD_ISSET(c->fd, &read_fds));
-        printf("File Descriptor 4: %d\n", c->fd);    
         if (ret > 0) {
-            printf("read_cb called from socket_read_task\n");
+            //ESP_LOGI(TAG, "reading from socket");
             read_cb(c); // read from socket
-        } /*else if (ret == 0) {
-            printf("No data received within the timeout period\n");
-        } else {
-            printf("Error occurred in lwip_select: %d\n", errno);
-        } */
+        } 
 
-        vTaskDelay(pdMS_TO_TICKS(10));  // Delay for 10ms so that we yield to scheduler
+        vTaskDelay(pdMS_TO_TICKS(100));  // delay for 10ms so that we yield to scheduler
     }
 
     vTaskDelete(NULL);
@@ -780,10 +836,12 @@ static int client_init(struct client *c) {
   */
 
   //task created to watch socket for incoming packets 
-  xTaskCreate(socket_read_task, "socket_read_task", 8192, c, 5, NULL);
+
+  //xTaskCreate(socket_read_task, "socket_read_task", 16384, c, 5, NULL);
 
   return 0;
 }
+
 
 static void client_free(struct client *c) {
   ngtcp2_conn_del(c->conn);
@@ -794,35 +852,51 @@ static void client_free(struct client *c) {
 int quic_init_client() {
   ESP_LOGI(TAG, "beginning client init");
   struct client c;
-  
+
   srandom((unsigned int)timestamp());
+
   ESP_LOGI(TAG,"creating QUIC client");
   if (client_init(&c) != 0) {
     exit(EXIT_FAILURE);
   } 
-
 
   ESP_LOGI(TAG, "writing to QUIC client connection");
   if (client_write(&c) != 0) {
     exit(EXIT_FAILURE);
   } 
 
+  size_t free_memory = heap_caps_get_free_size(MALLOC_CAP_8BIT); // You can also use MALLOC_CAP_INTERNAL or MALLOC_CAP_SPIRAM for different regions
+  printf("Free memory: %zu bytes\n", free_memory);
+  size_t total_heap = heap_caps_get_total_size(MALLOC_CAP_DEFAULT);
+  printf("Total heap size: %d bytes\n", total_heap);
+
+  fd_set read_fds;
+  struct timeval timeout;
+
   while (1) {
-    //needed so function doesnt return and task stays open - hence memory not corrupted
-  }
-  /* this works ! as in it reads a packet but logic surrounding it is not correct
-  vTaskDelay(500 / portTICK_PERIOD_MS);  // Wait for 100 milliseconds
-  ESP_LOGI(TAG, "trying to read from main");
-  if (client_read(&c) != 0) {
-      ESP_LOGE("read_cb", "Error reading from client.");
-      //client_close(c);
-      exit(EXIT_FAILURE);
-  }
-  */
-  
+    //needed so function doesnt return and task stays open - hence memory not freed
+    FD_ZERO(&read_fds);
+    FD_SET(c.fd, &read_fds);
 
-  //ev_run(EV_DEFAULT, 0);
+    timeout.tv_sec = 1;  // ?? why
+    timeout.tv_usec = 0;
 
+    // if handshake is complete this will output 1 - rn it outputs 0
+    int test = ngtcp2_conn_get_handshake_completed(c.conn);
+    printf("Handshake complete check (1 = success): %d\n", test);
+    
+   
+
+    int ret = lwip_select(c.fd + 1, &read_fds, NULL, NULL, &timeout);
+    if (ret > 0) {
+        ESP_LOGI(TAG, "reading from socket");
+        read_cb(&c); // read from socket
+    } 
+
+    
+    vTaskDelay(pdMS_TO_TICKS(100)); 
+  }
+ 
   //client_free(&c);
 
   return 0;

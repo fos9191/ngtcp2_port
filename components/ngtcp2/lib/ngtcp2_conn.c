@@ -81,6 +81,16 @@ static void conn_update_timestamp(ngtcp2_conn *conn, ngtcp2_tstamp ts) {
  * has completed and 1 RTT keys are available.
  */
 static int conn_is_tls_handshake_completed(ngtcp2_conn *conn) {
+  /*
+  int tls_handshake_completed = conn->flags & NGTCP2_CONN_FLAG_TLS_HANDSHAKE_COMPLETED;
+  int rx_ckm_exists = conn->pktns.crypto.rx.ckm != NULL;
+  int tx_ckm_exists = conn->pktns.crypto.tx.ckm != NULL;
+
+  // Print the values of the conditions
+  printf("TLS Handshake Completed: %d\n", tls_handshake_completed);
+  printf("RX CKM Exists: %d\n", rx_ckm_exists);
+  printf("TX CKM Exists: %d\n", tx_ckm_exists);
+  */
   return (conn->flags & NGTCP2_CONN_FLAG_TLS_HANDSHAKE_COMPLETED) &&
          conn->pktns.crypto.rx.ckm && conn->pktns.crypto.tx.ckm;
 }
@@ -2610,7 +2620,7 @@ void ngtcp2_conn_discard_initial_state(ngtcp2_conn *conn, ngtcp2_tstamp ts) {
   if (!conn->in_pktns) {
     return;
   }
-
+  
   ngtcp2_log_info(&conn->log, NGTCP2_LOG_EVENT_CON,
                   "discarding Initial packet number space");
 
@@ -2690,6 +2700,7 @@ static ngtcp2_ssize conn_write_handshake_ack_pkts(ngtcp2_conn *conn,
     res += nwrite;
 
     if (!conn->server && nwrite) {
+      printf("this 4\n");
       ngtcp2_conn_discard_initial_state(conn, ts);
     }
   }
@@ -2803,6 +2814,7 @@ static ngtcp2_ssize conn_write_handshake_pkts(ngtcp2_conn *conn,
        conn->hs_pktns->rtb.probe_pkt_left)) {
     /* Discard Initial state here so that Handshake packet is not
        padded. */
+       printf("this 1\n");
     ngtcp2_conn_discard_initial_state(conn, ts);
   } else if (conn->in_pktns) {
     nwrite =
@@ -2866,6 +2878,11 @@ static ngtcp2_ssize conn_write_handshake_pkts(ngtcp2_conn *conn,
     /* We don't need to send further Initial packet if we have
        Handshake key and sent something with it.  So discard initial
        state here. */
+       
+    // problem is here - the handshake is not complete when it should be considered complete   
+    int test = ngtcp2_conn_get_handshake_completed(conn);
+    printf("Handshake completed: %d\n", test);
+        
     ngtcp2_conn_discard_initial_state(conn, ts);
   }
 
@@ -9539,7 +9556,7 @@ static int conn_process_buffered_handshake_pkt(ngtcp2_conn *conn,
       return (int)nread;
     }
   }
-
+  
   return 0;
 }
 
@@ -9841,6 +9858,7 @@ static ngtcp2_ssize conn_read_handshake(ngtcp2_conn *conn,
     }
 
     if (conn->hs_pktns->rx.max_pkt_num != -1) {
+      printf("this 2\n");
       ngtcp2_conn_discard_initial_state(conn, ts);
     }
 
@@ -9946,9 +9964,9 @@ int ngtcp2_conn_read_pkt_versioned(ngtcp2_conn *conn, const ngtcp2_path *path,
   ngtcp2_ssize nread = 0;
   const ngtcp2_pkt_info zero_pi = {0};
   (void)pkt_info_version;
-
+  //backtrace
+  
   assert(!(conn->flags & NGTCP2_CONN_FLAG_PPE_PENDING));
-
   conn_update_timestamp(conn, ts);
 
   ngtcp2_log_info(&conn->log, NGTCP2_LOG_EVENT_CON, "recv packet len=%zu",

@@ -10,7 +10,8 @@
         "ngtcp2_conn.h": "c",
         "time.h": "c",
         "ssl.h": "c",
-        "esp32-crypt.h": "c"
+        "esp32-crypt.h": "c",
+        "atomic": "c"
     },
     "C_Cpp.errorSquiggles": "disabled"
 }

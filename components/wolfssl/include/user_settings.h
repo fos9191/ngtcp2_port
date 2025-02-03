@@ -1043,17 +1043,28 @@ Turn on timer debugging (used when CPU cycles not available)
  *  #define HAVE_AES_DIRECT
  */
 
-#undef  WOLFSSL_ESPIDF
-#define WOLFSSL_ESPIDF
-#define OPENSSL_EXTRA
+
 #define OPENSSL_ALL
-#undef HAVE_SESSION_TICKET
+#define OPENSSL_EXTRA
 #define HAVE_SESSION_TICKET
-#undef WOLFSSL_SSL_SESS_INCLUDED
-#define WOLFSSL_SSL_SESS_INCLUDED
+#define HAVE_TLS_EXTENSIONS
 #define HAVE_ALPN
+#define WC_RSA_PSS
+#define WOLFSSL_AES_COUNTER
+#define WOLFSSL_QUIC
+#define WOLFSSL_TLS13
 
 #define WOLFSSL_AES_DIRECT
 #define HAVE_EX_DATA
 #define HAVE_ED25519
 #define HAVE_SUPPORTED_CURVES
+
+#define DEBUG_WOLFSSL
+
+// for CA to use with google.com
+#define WOLFSSL_ALT_CERT_CHAINS
+#define WOLFSSL_SSL_LOAD_INCLUDED
+#define FP_MAX_BITS 8192
+
+// skip the time check for crypto handshake for now!
+#define NO_ASN_TIME_CHECK

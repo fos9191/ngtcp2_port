@@ -8,6 +8,10 @@
 #include "wifi_connect.h"
 #include "nvs_flash.h"
 #include <esp_log.h>
+#include <time.h>
+#include <stdlib.h>
+#include "esp_sntp.h"
+#include <sys/time.h>
 
 static const char* TAG = "app_main";
 
@@ -25,12 +29,27 @@ static const char* TAG = "app_main";
     CFLAGS +=-DWOLFSSL_USER_SETTINGS"
 #endif
 
+// set the system time to 2025 - so CA cert is in-date 
+void set_system_time() {
+    struct timeval tv;
+    struct tm tm_time = {
+        .tm_year = 2025 - 1900, 
+        .tm_mon  = 0,          
+        .tm_mday = 1,           
+        .tm_hour = 12,          
+        .tm_min  = 0,
+        .tm_sec  = 0
+    };
+
+    tv.tv_sec = mktime(&tm_time);
+    tv.tv_usec = 0;
+
+    settimeofday(&tv, NULL); 
+    printf("Time manually set to: %s", asctime(&tm_time));
+}
 
 void app_main_logic(void) {
-    // Initialize wolfSSL library
     esp_err_t ret = 0;
-
-    //ngtcp2_path path = set_ngtcp2_path("192.168.1.2", "192.168.1.1", 12345, 443);
     
     // initialise the flash - used to store wifi credentials
     ESP_ERROR_CHECK(nvs_flash_init());
@@ -44,13 +63,14 @@ void app_main_logic(void) {
             ret = wifi_init_sta();
         }
 
-    
+    set_system_time();  
     /*
     intialise quic client - this currently sets up the quic client object and
     performs a handshake with google.com (as an example)
     */ 
+    //wolfSSL_Debugging_ON();
     quic_init_client();    
-
+    
 }
 
 void app_main_task(void *pvParameters) {
@@ -58,7 +78,7 @@ void app_main_task(void *pvParameters) {
     vTaskDelete(NULL);
 }
 
-#define MAIN_TASK_STACK_SIZE 16384
+#define MAIN_TASK_STACK_SIZE 32000
 
 void app_main(void){
     xTaskCreate(app_main_task, "app_main_task", MAIN_TASK_STACK_SIZE, NULL, 5, NULL);

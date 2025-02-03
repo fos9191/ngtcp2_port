@@ -821,7 +821,8 @@ void ngtcp2_log_info(ngtcp2_log *log, ngtcp2_log_event ev, const char *fmt,
   if (n < 0 || (size_t)n >= sizeof(buf)) {
     return;
   }
-
+  //right before crypto error this print is called
+  
   log->log_printf(log->user_data, (NGTCP2_LOG_HD " %s"),
                   timestamp_cast(log->last_ts - log->ts), log->scid,
                   strevent(ev), buf);
