@@ -63,9 +63,12 @@
 
 //#include <ev.h>
 
-#define REMOTE_HOST "www.google.com"
-#define REMOTE_PORT "443"
+#define REMOTE_HOST "172.20.10.12"
+#define REMOTE_PORT "12345"
 #define ALPN "\x2h3"
+
+#define TEST_UDP_IP "172.20.10.12"
+#define TEST_UDP_PORT 12345
 //#define MESSAGE "GET /\r\n"
 
 static const char *TAG = "quic_client_init";
@@ -225,6 +228,39 @@ void print_system_time() {
     printf("Current time: %04d-%02d-%02d %02d:%02d:%02d\n",
            timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday,
            timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
+}
+
+
+void send_udp_burst(int sockfd, struct sockaddr_in *server_addr) {
+  const char *msg = "test udp packets";
+  for (int i = 0; i < 3; i++) { 
+      sendto(sockfd, msg, strlen(msg), 0, (struct sockaddr *)server_addr, sizeof(*server_addr));
+      printf("sent a udp packet\n");
+      vTaskDelay(pdMS_TO_TICKS(2500)); // delay between packets
+  }
+
+  ESP_LOGI(TAG, "sent 5 udp packets");
+}
+
+void udp_flush() {
+  // sends udp packets to server specified by TEST_UDP_PORT and TEST_UDP_IP
+  int sockfd;
+  struct sockaddr_in server_addr ;
+
+  sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+  if (sockfd < 0) {
+      perror("Socket creation failed");
+      return;
+  }
+
+  memset(&server_addr, 0, sizeof(server_addr));
+  server_addr.sin_family = AF_INET;
+  server_addr.sin_port = htons(TEST_UDP_PORT);
+  inet_pton(AF_INET, TEST_UDP_IP, &server_addr.sin_addr);
+
+  send_udp_burst(sockfd, &server_addr);
+
+  close(sockfd);
 }
 
 static int client_ssl_init(struct client *c) {
@@ -861,6 +897,11 @@ int quic_init_client() {
   } 
 
   ESP_LOGI(TAG, "writing to QUIC client connection");
+  
+  // send some tester udp packets
+  udp_flush();
+
+  ESP_LOGI(TAG, "entering client write");
   if (client_write(&c) != 0) {
     exit(EXIT_FAILURE);
   } 
