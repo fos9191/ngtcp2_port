@@ -38,6 +38,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <errno.h>
+#include <unistd.h> 
 
 #include <ngtcp2/ngtcp2.h>
 #include <ngtcp2/ngtcp2_crypto.h>
@@ -63,12 +64,12 @@
 
 //#include <ev.h>
 
-#define REMOTE_HOST "172.20.10.12"
-#define REMOTE_PORT "12345"
+#define REMOTE_HOST "172.20.10.3"
+#define REMOTE_PORT "4433"
 #define ALPN "\x2h3"
 
-#define TEST_UDP_IP "172.20.10.12"
-#define TEST_UDP_PORT 12345
+#define TEST_UDP_IP "172.20.10.3"
+#define TEST_UDP_PORT "4433"
 //#define MESSAGE "GET /\r\n"
 
 static const char *TAG = "quic_client_init";
@@ -102,24 +103,6 @@ static uint64_t timestamp(void) {
   //fprintf(stderr, "Timestamp: %lld seconds, %ld nanoseconds\n", tp.tv_sec, tp.tv_nsec);
   return (uint64_t)tp.tv_sec * NGTCP2_SECONDS + (uint64_t)tp.tv_nsec;
 }
-
-/*
-int RAND_bytes(unsigned char *buffer, int num) {
-    // Initialize the random seed only once (if it's not already done)
-    static int initialized = 0;
-    if (!initialized) {
-        srand((unsigned int)time(NULL));  // Seed the random number generator with the current time
-        initialized = 1;
-    }
-
-    // Generate random bytes
-    for (int i = 0; i < num; i++) {
-        buffer[i] = (unsigned char)(rand() & 0xFF);  // rand() produces an integer, mask to get a byte
-    }
-    
-    return 1;  // Indicate success
-}
-*/
 
 
 static int create_sock(struct sockaddr *addr, socklen_t *paddrlen,
@@ -274,37 +257,31 @@ static int client_ssl_init(struct client *c) {
 
   //load the CA cert from google.com - got using openssl 
   const char promCert[] = \
-                        "-----BEGIN CERTIFICATE-----\n" \
-                        "MIIFYjCCBEqgAwIBAgIQd70NbNs2+RrqIQ/E8FjTDTANBgkqhkiG9w0BAQsFADBX\n" \
-                        "MQswCQYDVQQGEwJCRTEZMBcGA1UEChMQR2xvYmFsU2lnbiBudi1zYTEQMA4GA1UE\n" \
-                        "CxMHUm9vdCBDQTEbMBkGA1UEAxMSR2xvYmFsU2lnbiBSb290IENBMB4XDTIwMDYx\n" \
-                        "OTAwMDA0MloXDTI4MDEyODAwMDA0MlowRzELMAkGA1UEBhMCVVMxIjAgBgNVBAoT\n" \
-                        "GUdvb2dsZSBUcnVzdCBTZXJ2aWNlcyBMTEMxFDASBgNVBAMTC0dUUyBSb290IFIx\n" \
-                        "MIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEAthECix7joXebO9y/lD63\n" \
-                        "ladAPKH9gvl9MgaCcfb2jH/76Nu8ai6Xl6OMS/kr9rH5zoQdsfnFl97vufKj6bwS\n" \
-                        "iV6nqlKr+CMny6SxnGPb15l+8Ape62im9MZaRw1NEDPjTrETo8gYbEvs/AmQ351k\n" \
-                        "KSUjB6G00j0uYODP0gmHu81I8E3CwnqIiru6z1kZ1q+PsAewnjHxgsHA3y6mbWwZ\n" \
-                        "DrXYfiYaRQM9sHmklCitD38m5agI/pboPGiUU+6DOogrFZYJsuB6jC511pzrp1Zk\n" \
-                        "j5ZPaK49l8KEj8C8QMALXL32h7M1bKwYUH+E4EzNktMg6TO8UpmvMrUpsyUqtEj5\n" \
-                        "cuHKZPfmghCN6J3Cioj6OGaK/GP5Afl4/Xtcd/p2h/rs37EOeZVXtL0m79YB0esW\n" \
-                        "CruOC7XFxYpVq9Os6pFLKcwZpDIlTirxZUTQAs6qzkm06p98g7BAe+dDq6dso499\n" \
-                        "iYH6TKX/1Y7DzkvgtdizjkXPdsDtQCv9Uw+wp9U7DbGKogPeMa3Md+pvez7W35Ei\n" \
-                        "Eua++tgy/BBjFFFy3l3WFpO9KWgz7zpm7AeKJt8T11dleCfeXkkUAKIAf5qoIbap\n" \
-                        "sZWwpbkNFhHax2xIPEDgfg1azVY80ZcFuctL7TlLnMQ/0lUTbiSw1nH69MG6zO0b\n" \
-                        "9f6BQdgAmD06yK56mDcYBZUCAwEAAaOCATgwggE0MA4GA1UdDwEB/wQEAwIBhjAP\n" \
-                        "BgNVHRMBAf8EBTADAQH/MB0GA1UdDgQWBBTkrysmcRorSCeFL1JmLO/wiRNxPjAf\n" \
-                        "BgNVHSMEGDAWgBRge2YaRQ2XyolQL30EzTSo//z9SzBgBggrBgEFBQcBAQRUMFIw\n" \
-                        "JQYIKwYBBQUHMAGGGWh0dHA6Ly9vY3NwLnBraS5nb29nL2dzcjEwKQYIKwYBBQUH\n" \
-                        "MAKGHWh0dHA6Ly9wa2kuZ29vZy9nc3IxL2dzcjEuY3J0MDIGA1UdHwQrMCkwJ6Al\n" \
-                        "oCOGIWh0dHA6Ly9jcmwucGtpLmdvb2cvZ3NyMS9nc3IxLmNybDA7BgNVHSAENDAy\n" \
-                        "MAgGBmeBDAECATAIBgZngQwBAgIwDQYLKwYBBAHWeQIFAwIwDQYLKwYBBAHWeQIF\n" \
-                        "AwMwDQYJKoZIhvcNAQELBQADggEBADSkHrEoo9C0dhemMXoh6dFSPsjbdBZBiLg9\n" \
-                        "NR3t5P+T4Vxfq7vqfM/b5A3Ri1fyJm9bvhdGaJQ3b2t6yMAYN/olUazsaL+yyEn9\n" \
-                        "WprKASOshIArAoyZl+tJaox118fessmXn1hIVw41oeQa1v1vg4Fv74zPl6/AhSrw\n" \
-                        "9U5pCZEt4Wi4wStz6dTZ/CLANx8LZh1J7QJVj2fhMtfTJr9w4z30Z209fOU0iOMy\n" \
-                        "+qduBmpvvYuR7hZL6Dupszfnw0Skfths18dG9ZKb59UhvmaSGZRVbNQpsg3BZlvi\n" \
-                        "d0lIKO2d1xozclOzgjXPYovJJIultzkMu34qQb9Sz/yilrbCgj8=\n" \
-                        "-----END CERTIFICATE-----\n";
+          "-----BEGIN CERTIFICATE-----\n" \
+          "MIID+zCCAuOgAwIBAgIUB9WQyCsV5x+JucBM5tC4HwfpUSMwDQYJKoZIhvcNAQEL\n" \
+          "BQAwgYwxCzAJBgNVBAYTAklFMRMwEQYDVQQIDApTb21lLVN0YXRlMQ8wDQYDVQQH\n" \
+          "DAZEdWJsaW4xITAfBgNVBAoMGEludGVybmV0IFdpZGdpdHMgUHR5IEx0ZDEMMAoG\n" \
+          "A1UEAwwDZm9zMSYwJAYJKoZIhvcNAQkBFhdmaW9ubmFub3MyMDAwQGdtYWlsLmNv\n" \
+          "bTAeFw0yNTAyMDYxMjAwMDJaFw0yNjAyMDYxMjAwMDJaMIGMMQswCQYDVQQGEwJJ\n" \
+          "RTETMBEGA1UECAwKU29tZS1TdGF0ZTEPMA0GA1UEBwwGRHVibGluMSEwHwYDVQQK\n" \
+          "DBhJbnRlcm5ldCBXaWRnaXRzIFB0eSBMdGQxDDAKBgNVBAMMA2ZvczEmMCQGCSqG\n" \
+          "SIb3DQEJARYXZmlvbm5hbm9zMjAwMEBnbWFpbC5jb20wggEiMA0GCSqGSIb3DQEB\n" \
+          "AQUAA4IBDwAwggEKAoIBAQCswdjOeGosJScHOdmv+U2goxWfRXziMcjhYjn782HR\n" \
+          "x9i0eb32V2q8UjWVszSZxF+NuRLZvKsGKOf2yd4XukkObfqrzf8gwLuskEpP1dyt\n" \
+          "YrKAkIDAXUDv4obeapuesgYnoiH1yg8h9eoYAkVwu6xPrdvI+pBEznUpyS204Y1i\n" \
+          "acm1tbZMkrXIkCanRW+Rsbf43c1wNOaepbtSlVtEfvngAFaMjdPAU6athOHu2L8S\n" \
+          "lWqyrxvD1MHiJ17OLLYueF+lnk0gyaFmwIQ8/7h/kXfKcJ9UI6basEjw2cZgymUB\n" \
+          "KIKC1F/7W3rW3iEo1omksS0wm7Q1qCgqoRhtSaWIu9udAgMBAAGjUzBRMB0GA1Ud\n" \
+          "DgQWBBTPy++v3u3w62lgaEqw6762ZRQrdTAfBgNVHSMEGDAWgBTPy++v3u3w62lg\n" \
+          "aEqw6762ZRQrdTAPBgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3DQEBCwUAA4IBAQCs\n" \
+          "FyGAimReycGBC0M5XojBNVwHCKTpPo8qcH/jyP9FNV+dsKAxqBuRfYibOdpNQxHb\n" \
+          "jZpxWSytITZfecwIlLuqVJJA4UcFa4DjTWXQxnz9soeElZSYCBdxOLn+CFGInGJA\n" \
+          "+v74DJI5+bvEK9F4Q8Az4FVfeb2w6QxjB5sSmuXASRh4Xlf29/Z2Yj1jw1Qv73a3\n" \
+          "6/g47M/wkEJhfP/FuihhQYAluaGkNlN9wE6NMd9GohMX3ynB2K5E+ut4zO4Qtj3N\n" \
+          "Jyt5uNXU2rL7FiEu3OOsJfoSog6F1zjW1zC2yR1MNsci9j8n34xvSFqcgJGbHRlF\n" \
+          "bo2ViNrwZTbhuJbv1wxI\n" \
+          "-----END CERTIFICATE-----\n";
+          
   print_system_time();
   if (wolfSSL_CTX_load_verify_buffer(c->ssl_ctx, (const byte*)promCert, strlen(promCert), WOLFSSL_FILETYPE_PEM) != WOLFSSL_SUCCESS) {
       fprintf(stderr, "error loading CA certificate\n");
@@ -501,8 +478,7 @@ static int client_quic_init(struct client *c,
   params.initial_max_stream_data_bidi_local = 128 * 1024;
   params.initial_max_data = 1024 * 1024;
 
-  rv =
-    ngtcp2_conn_client_new(&c->conn, &dcid, &scid, &path, NGTCP2_PROTO_VER_V1,
+  rv = ngtcp2_conn_client_new(&c->conn, &dcid, &scid, &path, NGTCP2_PROTO_VER_V1,
                            &callbacks, &settings, &params, NULL, c);
   if (rv != 0) {
     fprintf(stderr, "ngtcp2_conn_client_new: %s\n", ngtcp2_strerror(rv));
@@ -732,38 +708,6 @@ fin:
   return;
 }
 
-/*
-static void read_cb(struct ev_loop *loop, ev_io *w, int revents) {
-  struct client *c = w->data;
-  (void)loop;
-  (void)revents;
-
-  if (client_read(c) != 0) {
-    client_close(c);
-    return;
-  }
-
-  if (client_write(c) != 0) {
-    client_close(c);
-  }
-}
-
-static void timer_cb(struct ev_loop *loop, ev_timer *w, int revents) {
-  struct client *c = w->data;
-  (void)loop;
-  (void)revents;
-
-  if (client_handle_expiry(c) != 0) {
-    client_close(c);
-    return;
-  }
-
-  if (client_write(c) != 0) {
-    client_close(c);
-  }
-}
-*/
-
 // my read_cb function to test reading from the socket
 static void read_cb(struct client *c) {
     // Check if there is data to read from the client
@@ -871,10 +815,6 @@ static int client_init(struct client *c) {
   c->timer.data = c;
   */
 
-  //task created to watch socket for incoming packets 
-
-  //xTaskCreate(socket_read_task, "socket_read_task", 16384, c, 5, NULL);
-
   return 0;
 }
 
@@ -883,6 +823,36 @@ static void client_free(struct client *c) {
   ngtcp2_conn_del(c->conn);
   wolfSSL_free(c->ssl);
   wolfSSL_CTX_free(c->ssl_ctx);
+}
+
+/*
+int open_uni_stream(struct client *c) {
+  const char * test_string = "this is a tester string !"
+  int open = 0;
+  open = ngtcp2_conn_open_uni_stream(c->conn, c->stream.stream_id, test_string);
+  if (open) {
+    ESP_LOGE(TAG, "error opening uni stream");
+    return -1;
+  }
+  ESP_LOGI(TAG, "opened uni stream");
+  return 1;
+}
+
+*/
+
+struct sockaddr_in get_remote_addr() {
+  struct sockaddr_in remote_addr;
+  
+  memset(&remote_addr, 0, sizeof(remote_addr));
+  remote_addr.sin_family = AF_INET;
+  remote_addr.sin_port = htons(atoi(REMOTE_PORT));
+
+  if (inet_pton(AF_INET, REMOTE_HOST, &remote_addr.sin_addr) <= 0) {
+    ESP_LOGE(TAG, "failure converting address");
+    exit(EXIT_FAILURE);
+  }
+
+  return remote_addr;
 }
 
 int quic_init_client() {
@@ -899,22 +869,23 @@ int quic_init_client() {
   ESP_LOGI(TAG, "writing to QUIC client connection");
   
   // send some tester udp packets
-  udp_flush();
+  // udp_flush();
 
   ESP_LOGI(TAG, "entering client write");
   if (client_write(&c) != 0) {
     exit(EXIT_FAILURE);
   } 
 
-  size_t free_memory = heap_caps_get_free_size(MALLOC_CAP_8BIT); // You can also use MALLOC_CAP_INTERNAL or MALLOC_CAP_SPIRAM for different regions
+  size_t free_memory = heap_caps_get_free_size(MALLOC_CAP_8BIT); 
   printf("Free memory: %zu bytes\n", free_memory);
   size_t total_heap = heap_caps_get_total_size(MALLOC_CAP_DEFAULT);
   printf("Total heap size: %d bytes\n", total_heap);
 
   fd_set read_fds;
   struct timeval timeout;
+  int handshake = 0;
 
-  while (1) {
+  while (!handshake) {
     //needed so function doesnt return and task stays open - hence memory not freed
     FD_ZERO(&read_fds);
     FD_SET(c.fd, &read_fds);
@@ -923,20 +894,68 @@ int quic_init_client() {
     timeout.tv_usec = 0;
 
     // if handshake is complete this will output 1 - rn it outputs 0
-    int test = ngtcp2_conn_get_handshake_completed(c.conn);
-    printf("Handshake complete check (1 = success): %d\n", test);
+    handshake = ngtcp2_conn_get_handshake_completed(c.conn);
+    printf("Handshake complete check (1 = success): %d\n", handshake);
     
-   
-
     int ret = lwip_select(c.fd + 1, &read_fds, NULL, NULL, &timeout);
     if (ret > 0) {
         ESP_LOGI(TAG, "reading from socket");
         read_cb(&c); // read from socket
     } 
-
     
     vTaskDelay(pdMS_TO_TICKS(100)); 
   }
+
+  
+  int64_t stream_id;
+  int stream_open = ngtcp2_conn_open_bidi_stream(c.conn, &stream_id, NULL);
+  if (stream_open == 0){
+    printf("stream successfully opened with stream id: %lld\n", stream_id);
+  } else {
+    printf("stream was not opened");
+  }
+
+  int count = 0;
+  ngtcp2_ssize size = NULL;
+
+  if (stream_open == 0) {
+    while(count < 10) {
+      uint8_t dest_buffer[1300];
+      ngtcp2_vec data;
+      const char *hello_msg = "hello from client hello from client hello from client \
+                                hello from client hello from client hello from client \
+                                hello from client hello from client hello from client ";
+      size_t msg_len = strlen(hello_msg) + 1; 
+      data.base = (uint8_t *)malloc(msg_len);
+      memcpy(data.base, hello_msg, msg_len);
+      data.len = msg_len;
+      uint64_t now = timestamp();
+      printf("timestamp before sending is : %lld\n", now);
+
+      size = ngtcp2_conn_writev_stream(c.conn, NULL, NULL, dest_buffer, sizeof(dest_buffer), 
+                                                    NULL, NULL, stream_id, &data, 1, now);
+      if (size < 0) {
+        ESP_LOGE(TAG, "error writing to stream");
+      }
+      
+      struct sockaddr_in remote_addr = get_remote_addr();
+      
+      ssize_t sent_bytes = sendto(c.fd, dest_buffer, size, 0, (struct sockaddr *)&remote_addr, sizeof(remote_addr));
+      if (sent_bytes < 0) {
+          perror("sendto failed");
+          free(data.base);
+          break;
+      }
+      
+      
+      //printf("Sent %zd bytes to server\n", sent_bytes);
+
+      count += 1;
+      usleep(1000000);
+    }
+  }
+  
+  //printf(size);
  
   //client_free(&c);
 

@@ -42,6 +42,8 @@
 #include "ngtcp2_tstamp.h"
 #include "ngtcp2_frame_chain.h"
 
+#include <stdio.h>
+
 /* NGTCP2_FLOW_WINDOW_RTT_FACTOR is the factor of RTT when flow
    control window auto-tuning is triggered. */
 #define NGTCP2_FLOW_WINDOW_RTT_FACTOR 2
@@ -4108,6 +4110,7 @@ static ngtcp2_ssize conn_write_pkt(ngtcp2_conn *conn, ngtcp2_pkt_info *pi,
         conn->pkt.pkt_empty = pkt_empty;
         conn->pkt.rtb_entry_flags = rtb_entry_flags;
         conn->pkt.hd_logged = hd_logged;
+        printf("setting ppe_pending here\n");
         conn->flags |= NGTCP2_CONN_FLAG_PPE_PENDING;
       }
 
@@ -4128,6 +4131,7 @@ static ngtcp2_ssize conn_write_pkt(ngtcp2_conn *conn, ngtcp2_pkt_info *pi,
     conn->pkt.pkt_empty = pkt_empty;
     conn->pkt.rtb_entry_flags = rtb_entry_flags;
     conn->pkt.hd_logged = hd_logged;
+    printf("setting ppe_pending here 2\n");
     conn->flags |= NGTCP2_CONN_FLAG_PPE_PENDING;
 
     assert(vmsg);
