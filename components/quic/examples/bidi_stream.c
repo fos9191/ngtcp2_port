@@ -647,6 +647,8 @@ static int client_write(struct client *c) {
   ngtcp2_tstamp expiry, now;
   int64_t t;
 
+  
+
   if (client_write_streams(c) != 0) {
     ESP_LOGE(TAG, "client_write_streams failed");
     return -1;
@@ -914,6 +916,8 @@ int quic_init_client() {
     exit(EXIT_FAILURE);
   } 
 
+  
+
   fd_set read_fds;
   struct timeval timeout;
   int handshake = 0;
@@ -945,6 +949,12 @@ int quic_init_client() {
   // open 5 uni streams
   int no_streams = 5;
   int64_t * stream_ids = malloc(no_streams * sizeof(int64_t));
+  /*
+  for (int i = 0; i < no_streams; i++) {
+    stream_ids[i] = i + 1; 
+    printf("stream_id[%d] is %lld\n", i, stream_ids[i]);
+  }
+  */
   
   if (open_streams(&c, stream_ids, no_streams, 0) == 0) {
     ESP_LOGI(TAG, "opened %d streams", no_streams);

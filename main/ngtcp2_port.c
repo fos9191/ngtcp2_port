@@ -4,14 +4,18 @@
 #include <wolfssl/ssl.h>
 #include <ngtcp2/ngtcp2.h>
 #include <inttypes.h>
-#include <quic_init_client.h>
 #include "wifi_connect.h"
+#include "ngtcp2_port.h"
 #include "nvs_flash.h"
 #include <esp_log.h>
 #include <time.h>
 #include <stdlib.h>
 #include "esp_sntp.h"
 #include <sys/time.h>
+
+
+#include <quic_init_client.h>
+#include <uni_stream.h>
 
 static const char* TAG = "app_main";
 
@@ -28,6 +32,8 @@ static const char* TAG = "app_main";
     #error "Missing WOLFSSL_USER_SETTINGS in CMakeLists or Makefile:\
     CFLAGS +=-DWOLFSSL_USER_SETTINGS"
 #endif
+
+TaskHandle_t main_task_handle = NULL;
 
 // set the system time to 2025 - so CA cert is in-date 
 void set_system_time() {
@@ -64,19 +70,22 @@ void app_main_logic(void) {
         }
 
     set_system_time();  
-    /*
-    intialise quic client - this currently sets up the quic client object and
-    performs a handshake with google.com (as an example)
-    */ 
-    //wolfSSL_Debugging_ON();
-    quic_init_client();    
     
+    //wolfSSL_Debugging_ON();
+    //quic_init_client();
+    
+    uni_stream(main_task_handle);
+    
+    return;
 }
 
 void app_main_task(void *pvParameters) {
+    main_task_handle = xTaskGetCurrentTaskHandle();
     app_main_logic();  // calls the main application logic
     vTaskDelete(NULL);
+    return;
 }
+
 
 #define MAIN_TASK_STACK_SIZE 32000
 

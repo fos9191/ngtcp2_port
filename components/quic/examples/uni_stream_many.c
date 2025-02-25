@@ -647,6 +647,8 @@ static int client_write(struct client *c) {
   ngtcp2_tstamp expiry, now;
   int64_t t;
 
+  
+
   if (client_write_streams(c) != 0) {
     ESP_LOGE(TAG, "client_write_streams failed");
     return -1;
@@ -904,7 +906,7 @@ int open_streams(struct client * c, int64_t *stream_ids, int no_streams, int typ
 }
 
 
-int quic_init_client() {
+int uni_streams_many() {
   struct client c;
 
   srandom((unsigned int)timestamp());
@@ -926,7 +928,7 @@ int quic_init_client() {
     if (client_write(&c) != 0) {
       exit(EXIT_FAILURE);
     } 
-    vTaskDelay(pdMS_TO_TICKS(10));
+    vTaskDelay(pdMS_TO_TICKS(100));
     // if handshake is complete this will output 1 - rn it outputs 0
     handshake = ngtcp2_conn_get_handshake_completed(c.conn);
     ESP_LOGI(TAG, "Handshake complete check (1 = success): %d", handshake);
@@ -951,19 +953,8 @@ int quic_init_client() {
   } else {
     ESP_LOGE(TAG, "failed to open streams");
   }
-
-  int64_t stream_id;
-  if (open_bidi_stream(&c, &stream_id) == 0) {
-    ESP_LOGI(TAG, "bidirection stream opened");
-  } else {
-    ESP_LOGE(TAG, "failed to open bidirectional stream");
-  }
   
-  if (send_data(&c, stream_id) == 0) {
-    ESP_LOGI(TAG, "sent data over stream : %lld", stream_id);
-  } else {
-    ESP_LOGE(TAG, "failed to send data over stream : %lld", stream_id);
-  }
+  // todo : send data over streams
   
  
   //client_free(&c);
@@ -971,3 +962,4 @@ int quic_init_client() {
 
   return 0;
 }
+

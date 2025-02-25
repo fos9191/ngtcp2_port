@@ -1,5 +1,6 @@
 idf_component_register(
-    SRC_DIRS "."
+    SRC_DIRS "."  "examples"
     INCLUDE_DIRS "include"
+    PRIV_INCLUDE_DIRS "../../main/include"
     PRIV_REQUIRES wolfssl ngtcp2 lwip esp_timer
 )

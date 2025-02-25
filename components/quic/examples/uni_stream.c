@@ -51,6 +51,8 @@
 #include "lwip/netdb.h"
 #include "lwip/dns.h"
 
+#include "ngtcp2_port.h"
+
 // must include wolfssl/settings.h before any other wolfssl files
 #include <wolfssl/wolfcrypt/settings.h> 
 #include <wolfssl/openssl/ssl.h>
@@ -72,7 +74,7 @@
 #define TEST_UDP_PORT "4433"
 //#define MESSAGE "GET /\r\n"
 
-static const char *TAG = "quic_client_init";
+static const char *TAG = "uni_stream";
 
 // define esp event base for event management
 ESP_EVENT_DEFINE_BASE(MY_EVENT_BASE);
@@ -186,7 +188,10 @@ struct client {
   ngtcp2_ccerr last_error;
   
   uint64_t timestamp_us;
+
+  esp_timer_handle_t timer;
 };
+
 
 static int numeric_host_family(const char *hostname, int family) {
   uint8_t dst[sizeof(struct in6_addr)];
@@ -645,20 +650,39 @@ static int client_write_streams(struct client *c) {
 
 static int client_write(struct client *c) {
   ngtcp2_tstamp expiry, now;
-  int64_t t;
+  uint64_t t;
 
+  
   if (client_write_streams(c) != 0) {
     ESP_LOGE(TAG, "client_write_streams failed");
     return -1;
   }
 
+  printf("c in client_write is %p\n", (void*)c);
+  printf("in client_write c->conn is %p\n", (void*)c->conn);
+  printf("in handle_timeout c->fd is %d\n", c->fd);
+
   expiry = ngtcp2_conn_get_expiry(c->conn);
   now = timestamp();
 
-  t = expiry < now ? 1e-9 : (expiry - now) / NGTCP2_SECONDS;
-
+  t = expiry < now ? 1e-9 : (expiry - now) / 1000;
+  printf("t is %lld\n", t);
+  printf("expiry time is %lld\n", expiry);
   //c->timer.repeat = t;
   //esp_timer_start_once(&c->timer, t);
+
+  // esp_timer calls require microseconds
+  if (esp_timer_is_active(c->timer)) {
+    ESP_LOGI(TAG, "entering reset timer logic");
+    esp_err_t ret = esp_timer_restart(c->timer, t);
+    if (ret != ESP_OK) {
+      ESP_LOGE(TAG, "esp_timer_restart failed: %s", esp_err_to_name(ret));
+    }
+    ESP_LOGI(TAG, "restarting client timer");
+  } else {
+    ESP_LOGI(TAG, "entering start timer logic");
+    esp_err_t ret = esp_timer_start_once(c->timer, expiry/1000); // /1000 for nanoseconds
+  }
 
   return 0;
 }
@@ -666,6 +690,8 @@ static int client_write(struct client *c) {
 
 
 static int client_handle_expiry(struct client *c) {
+  printf("client_handle_exp timestamp after timeout is %lld\n", timestamp());
+  printf("client_handle_exp c->conn is %p\n", (void*)c->conn);
   int rv = ngtcp2_conn_handle_expiry(c->conn, timestamp());
   if (rv != 0) {
     fprintf(stderr, "ngtcp2_conn_handle_expiry: %s\n", ngtcp2_strerror(rv));
@@ -715,8 +741,8 @@ static void read_cb(struct client *c) {
 
     // If reading was successful, attempt to write back to the client
     if (client_write(c) != 0) {
-        ESP_LOGE("read_cb", "Error writing to client.");
-        //client_close(c);
+        ESP_LOGE("read_cb", "Error writing.");
+        client_close(c);
     }
 }
 
@@ -725,43 +751,36 @@ static ngtcp2_conn *get_conn(ngtcp2_crypto_conn_ref *conn_ref) {
   return c->conn;
 }
 
-// this function should read from the socket (c->fd)
-void socket_read_task(void *param) {
-    struct client *c = (struct client *)param;
-    fd_set read_fds;
-    struct timeval timeout;
+void handle_timeout(void *arg) {
+  printf("arg in handle_timeout is %p\n", (void*)arg);
+  struct client *c = (struct client *)arg;
+  c->conn = get_conn(&c->conn_ref);
+  printf("c in handle_timeout is %p\n", (void*)c);
+  printf("in handle_timeout c->fd is %d\n", c->fd);
+  printf("in handle_timeout c->conn is %p\n", (void*)c->conn);
+  
+  ESP_LOGI(TAG, "in the timeout function");
 
-    if (c->fd < 0) {
-        printf("Invalid file descriptor: %d\n", c->fd);
-        return;
-    }
+  if (client_handle_expiry(c) != 0) {
+    ESP_LOGE(TAG, "could not handle timer expiry");
+    return;
+  }
 
-    int flags = fcntl(c->fd, F_GETFL, 0);
-    if (flags & O_NONBLOCK) {
-        ESP_LOGI(TAG, "Socket is in non-blocking mode");
-    } else {
-      ESP_LOGI(TAG, "Socket is in blocking mode");
-    }
-
-    while (1) {
-        FD_ZERO(&read_fds);
-        FD_SET(c->fd, &read_fds);
-
-        timeout.tv_sec = 1;  // ?? why
-        timeout.tv_usec = 0;
-        
-        //printf("fd_isset is : %ld\n", FD_ISSET(c->fd, &read_fds));
-        int ret = lwip_select(c->fd + 1, &read_fds, NULL, NULL, &timeout);
-        if (ret > 0) {
-            //ESP_LOGI(TAG, "reading from socket");
-            read_cb(c); // read from socket
-        } 
-
-        vTaskDelay(pdMS_TO_TICKS(100));  // delay for 10ms so that we yield to scheduler
-    }
-
-    vTaskDelete(NULL);
+  if (client_write(c) != 0) {
+    ESP_LOGE(TAG, "error with writing to client after timeout");
+    client_close(c);
+  }
 }
+
+// called on timeout of the timer in the client object 
+void timeout_cb(void *arg) {
+  vTaskSuspend(main_task_handle);
+  printf("arg in timeout_cb is %p\n", (void*)arg);
+  handle_timeout(arg);
+  vTaskResume(main_task_handle);
+}
+
+
 
 static int client_init(struct client *c) {
   struct sockaddr_storage remote_addr, local_addr;
@@ -810,6 +829,21 @@ static int client_init(struct client *c) {
   ev_timer_init(&c->timer, timer_cb, 0., 0.);
   c->timer.data = c;
   */
+  printf("c->conn is %p\n", (void*)c->conn);
+  printf("c is %p\n", (void*)c);
+
+
+  esp_timer_create_args_t timer_args = {
+    .callback = timeout_cb,
+    .arg = c,    
+    .dispatch_method = ESP_TIMER_TASK,
+    .name = "timer"
+  };
+
+  esp_err_t ret = esp_timer_create(&timer_args, &c->timer);
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to create timer");
+  } 
 
   return 0;
 }
@@ -842,15 +876,15 @@ int send_data(struct client * c, int64_t stream_id) {
   ngtcp2_ssize size = NULL;
   uint8_t dest_buffer[1300];
   ngtcp2_vec data;
-  const char *hello_msg = "hello from client hello from client hello from client hello from client";
+  const char *hello_msg = "hello from client hello from client hello";
   size_t msg_len = strlen(hello_msg) + 1; 
   data.base = (uint8_t *)malloc(msg_len);
   memcpy(data.base, hello_msg, msg_len);
   data.len = msg_len;
-  uint64_t now = timestamp();
-
+  
   size = ngtcp2_conn_writev_stream(c->conn, NULL, NULL, dest_buffer, sizeof(dest_buffer), 
-                                                NULL, NULL, stream_id, &data, 1, now);
+                                                NULL, NULL, stream_id, &data, 1, timestamp());
+  
   if (size < 0) {
     ESP_LOGE(TAG, "error writing to stream");
   }
@@ -903,14 +937,25 @@ int open_streams(struct client * c, int64_t *stream_ids, int no_streams, int typ
   }
 }
 
+void monitor_socket(void *arg) {
 
-int quic_init_client() {
+}
+
+int uni_stream(TaskHandle_t main_task_handle) {
   struct client c;
 
   srandom((unsigned int)timestamp());
 
   ESP_LOGI(TAG, "creating QUIC client");
   if (client_init(&c) != 0) {
+    exit(EXIT_FAILURE);
+  } 
+
+  // create a task to monitor the socket
+  //xTaskCreate(monitor_socket, "monitor_socket_task", 2048, &c.fd, 5, NULL);
+
+  ESP_LOGI(TAG, "starting handshake");
+  if (client_write(&c) != 0) {
     exit(EXIT_FAILURE);
   } 
 
@@ -922,10 +967,6 @@ int quic_init_client() {
     FD_ZERO(&read_fds);
     FD_SET(c.fd, &read_fds);
     
-    ESP_LOGI(TAG, "starting handshake");
-    if (client_write(&c) != 0) {
-      exit(EXIT_FAILURE);
-    } 
     vTaskDelay(pdMS_TO_TICKS(10));
     // if handshake is complete this will output 1 - rn it outputs 0
     handshake = ngtcp2_conn_get_handshake_completed(c.conn);
@@ -941,31 +982,25 @@ int quic_init_client() {
   }
   ESP_LOGI(TAG, "handshake finished");
 
-
-  // open 5 uni streams
-  int no_streams = 5;
-  int64_t * stream_ids = malloc(no_streams * sizeof(int64_t));
-  
-  if (open_streams(&c, stream_ids, no_streams, 0) == 0) {
-    ESP_LOGI(TAG, "opened %d streams", no_streams);
-  } else {
-    ESP_LOGE(TAG, "failed to open streams");
-  }
-
   int64_t stream_id;
-  if (open_bidi_stream(&c, &stream_id) == 0) {
-    ESP_LOGI(TAG, "bidirection stream opened");
+  if (open_uni_stream(&c, &stream_id) == 0) {
+    ESP_LOGI(TAG, "unidirectional stream opened");
   } else {
-    ESP_LOGE(TAG, "failed to open bidirectional stream");
+    ESP_LOGE(TAG, "failed to open unidirectional stream");
   }
   
   if (send_data(&c, stream_id) == 0) {
     ESP_LOGI(TAG, "sent data over stream : %lld", stream_id);
+    printf("c->conn after sending is %p\n", (void*)c.conn); // CHECKING IF C->CONN IS THE SAME HERE
   } else {
     ESP_LOGE(TAG, "failed to send data over stream : %lld", stream_id);
   }
+
+  while (1) {
+    ESP_LOGI(TAG, "holding task open");
+    vTaskDelay(pdMS_TO_TICKS(10000));
+  }
   
- 
   //client_free(&c);
   //ESP_LOGI(TAG, "client freed");
 
