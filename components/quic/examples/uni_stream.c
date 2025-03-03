@@ -683,7 +683,7 @@ static int client_write(struct client *c) {
     ESP_LOGI(TAG, "entering start timer logic");
     esp_err_t ret = esp_timer_start_once(c->timer, expiry/1000); // /1000 for nanoseconds
   }
-
+  ESP_LOGI(TAG, "returning from client_write");
   return 0;
 }
 
@@ -695,6 +695,7 @@ static int client_handle_expiry(struct client *c) {
   int rv = ngtcp2_conn_handle_expiry(c->conn, timestamp());
   if (rv != 0) {
     fprintf(stderr, "ngtcp2_conn_handle_expiry: %s\n", ngtcp2_strerror(rv));
+    // todo : if error code is ERR_IDLE_CLOSE then close the connection
     return -1;
   }
 
@@ -746,6 +747,18 @@ static void read_cb(struct client *c) {
     }
 }
 
+static void read_cb_loop(void *handler_arg, esp_event_base_t base, int32_t id, void *event_data) {
+  struct client *c = (struct client *)handler_arg;
+  if (c == NULL) {
+    ESP_LOGE("read_cb_loop", "error passing client struct to read_cb_loop");
+    return;
+  }
+  printf("c in read_cb_loop is %p\n", (void*)c);
+
+  ESP_LOGI("read_cb_loop", "event received - reading from socket");
+  read_cb(c);
+}
+
 static ngtcp2_conn *get_conn(ngtcp2_crypto_conn_ref *conn_ref) {
   struct client *c = conn_ref->user_data;
   return c->conn;
@@ -760,6 +773,22 @@ void handle_timeout(void *arg) {
   printf("in handle_timeout c->conn is %p\n", (void*)c->conn);
   
   ESP_LOGI(TAG, "in the timeout function");
+
+  if (client_handle_expiry(c) != 0) {
+    ESP_LOGE(TAG, "could not handle timer expiry");
+    return;
+  }
+
+  if (client_write(c) != 0) {
+    ESP_LOGE(TAG, "error with writing to client after timeout");
+    client_close(c);
+  }
+}
+
+
+void handle_timeout_loop(void *handler_arg, esp_event_base_t base, int32_t id, void *event_data) {
+  struct client *c = (struct client *)handler_arg;
+  printf("c in handle_timeout is %p\n", (void*)c);
 
   if (client_handle_expiry(c) != 0) {
     ESP_LOGE(TAG, "could not handle timer expiry");
@@ -817,18 +846,6 @@ static int client_init(struct client *c) {
   c->conn_ref.get_conn = get_conn;
   c->conn_ref.user_data = c;
   
-  /*
-  this code initializes and starts an I/O watcher on a file descriptor (c->fd) 
-  to monitor for readability. When data becomes available on this file descriptor, 
-  the specified callback (read_cb) will be invoked.
-
-  ev_io_init(&c->rev, read_cb, c->fd, EV_READ);
-  c->rev.data = c;
-  ev_io_start(EV_DEFAULT, &c->rev);
-
-  ev_timer_init(&c->timer, timer_cb, 0., 0.);
-  c->timer.data = c;
-  */
   printf("c->conn is %p\n", (void*)c->conn);
   printf("c is %p\n", (void*)c);
 
@@ -937,12 +954,40 @@ int open_streams(struct client * c, int64_t *stream_ids, int no_streams, int typ
   }
 }
 
-void monitor_socket(void *arg) {
-
+void print_heap_size() {
+  ESP_LOGI("Heap check", "Current free heap size: %lu bytes", esp_get_free_heap_size());
 }
+
+void monitor_socket(void *handler_arg, esp_event_base_t event_base, int32_t event_id, void *event_data) {
+  ESP_LOGI("Event loop", "Event received: base=%s, id=%" PRId32, event_base, event_id);
+}
+
+ESP_EVENT_DEFINE_BASE(SOCKET_WATCHER_BASE);  
+enum {
+    SOCKET_WATCHER_ID = 2 
+};
 
 int uni_stream(TaskHandle_t main_task_handle) {
   struct client c;
+
+  esp_event_loop_args_t loop_args = {
+    .queue_size = 20,
+    .task_name = NULL,
+    .task_priority = 8,
+    .task_stack_size = 4096,
+    .task_core_id = 0
+  };
+
+  esp_event_loop_handle_t loop_handle;
+  esp_err_t ret = esp_event_loop_create(&loop_args, &loop_handle);
+  if (ret == ESP_OK) {
+    ESP_LOGI(TAG, "event loop created successfully");
+  } else {
+    ESP_LOGE(TAG, "event loop creation failed");
+  }
+
+  print_heap_size();  
+  esp_event_handler_register_with(loop_handle, SOCKET_WATCHER_BASE, SOCKET_WATCHER_ID, read_cb_loop, (void *)&c);
 
   srandom((unsigned int)timestamp());
 
@@ -950,9 +995,6 @@ int uni_stream(TaskHandle_t main_task_handle) {
   if (client_init(&c) != 0) {
     exit(EXIT_FAILURE);
   } 
-
-  // create a task to monitor the socket
-  //xTaskCreate(monitor_socket, "monitor_socket_task", 2048, &c.fd, 5, NULL);
 
   ESP_LOGI(TAG, "starting handshake");
   if (client_write(&c) != 0) {
@@ -966,21 +1008,23 @@ int uni_stream(TaskHandle_t main_task_handle) {
   while (!handshake) {
     FD_ZERO(&read_fds);
     FD_SET(c.fd, &read_fds);
-    
-    vTaskDelay(pdMS_TO_TICKS(10));
-    // if handshake is complete this will output 1 - rn it outputs 0
+
     handshake = ngtcp2_conn_get_handshake_completed(c.conn);
     ESP_LOGI(TAG, "Handshake complete check (1 = success): %d", handshake);
-    
     int ret = lwip_select(c.fd + 1, &read_fds, NULL, NULL, &timeout);
+    printf("ret is %d\n", ret);
     if (ret > 0) {
-        ESP_LOGI(TAG, "reading from socket");
-        read_cb(&c); // read from socket
-    } 
+      ESP_LOGI(TAG, "posting read event to event loop");
+      esp_event_post_to(loop_handle, SOCKET_WATCHER_BASE, SOCKET_WATCHER_ID, NULL, 0, portMAX_DELAY);
+    }
+    esp_event_loop_run(loop_handle, pdMS_TO_TICKS(1000));
     
-    vTaskDelay(pdMS_TO_TICKS(1000)); 
+    vTaskDelay(pdMS_TO_TICKS(500));
   }
+
   ESP_LOGI(TAG, "handshake finished");
+
+  esp_event_post_to(loop_handle, SOCKET_WATCHER_BASE, SOCKET_WATCHER_ID, NULL, 0, portMAX_DELAY);
 
   int64_t stream_id;
   if (open_uni_stream(&c, &stream_id) == 0) {
@@ -991,14 +1035,36 @@ int uni_stream(TaskHandle_t main_task_handle) {
   
   if (send_data(&c, stream_id) == 0) {
     ESP_LOGI(TAG, "sent data over stream : %lld", stream_id);
-    printf("c->conn after sending is %p\n", (void*)c.conn); // CHECKING IF C->CONN IS THE SAME HERE
   } else {
     ESP_LOGE(TAG, "failed to send data over stream : %lld", stream_id);
   }
 
+  int count = 0;
+
   while (1) {
     ESP_LOGI(TAG, "holding task open");
-    vTaskDelay(pdMS_TO_TICKS(10000));
+
+    FD_ZERO(&read_fds);
+    FD_SET(c.fd, &read_fds);
+
+    int ret = lwip_select(c.fd + 1, &read_fds, NULL, NULL, &timeout);
+    printf("ret is %d\n", ret);
+    if (ret > 0) {
+      ESP_LOGI(TAG, "posting read event to event loop");
+      esp_event_post_to(loop_handle, SOCKET_WATCHER_BASE, SOCKET_WATCHER_ID, NULL, 0, portMAX_DELAY);
+    }
+
+    if (count < 5){   
+      count += 1;
+      if (send_data(&c, stream_id) == 0) {
+        ESP_LOGI(TAG, "sent data over stream : %lld", stream_id);
+      } else {
+        ESP_LOGE(TAG, "failed to send data over stream : %lld", stream_id);
+      }
+    }
+
+    esp_event_loop_run(loop_handle, pdMS_TO_TICKS(1000));
+    vTaskDelay(pdMS_TO_TICKS(800));
   }
   
   //client_free(&c);

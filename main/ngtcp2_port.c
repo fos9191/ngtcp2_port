@@ -87,7 +87,7 @@ void app_main_task(void *pvParameters) {
 }
 
 
-#define MAIN_TASK_STACK_SIZE 32000
+#define MAIN_TASK_STACK_SIZE 35000
 
 void app_main(void){
     xTaskCreate(app_main_task, "app_main_task", MAIN_TASK_STACK_SIZE, NULL, 5, NULL);
