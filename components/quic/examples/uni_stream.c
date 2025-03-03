@@ -80,6 +80,12 @@ static const char *TAG = "uni_stream";
 ESP_EVENT_DEFINE_BASE(MY_EVENT_BASE);
 #define MY_EVENT_ID_READ 0
 
+ESP_EVENT_DEFINE_BASE(SOCKET_WATCHER_BASE);  
+ESP_EVENT_DEFINE_BASE(TIMER_BASE);  
+enum {
+    SOCKET_WATCHER_ID = 2,
+    TIMER_ID = 3
+};
 
 /*
  * Example 1: Handshake with www.google.com
@@ -668,8 +674,6 @@ static int client_write(struct client *c) {
   t = expiry < now ? 1e-9 : (expiry - now) / 1000;
   printf("t is %lld\n", t);
   printf("expiry time is %lld\n", expiry);
-  //c->timer.repeat = t;
-  //esp_timer_start_once(&c->timer, t);
 
   // esp_timer calls require microseconds
   if (esp_timer_is_active(c->timer)) {
@@ -805,13 +809,14 @@ void handle_timeout_loop(void *handler_arg, esp_event_base_t base, int32_t id, v
 void timeout_cb(void *arg) {
   vTaskSuspend(main_task_handle);
   printf("arg in timeout_cb is %p\n", (void*)arg);
-  handle_timeout(arg);
+  esp_event_post_to(arg, TIMER_BASE, TIMER_ID, NULL, 0, portMAX_DELAY);
+  //handle_timeout(arg);
   vTaskResume(main_task_handle);
 }
 
 
 
-static int client_init(struct client *c) {
+static int client_init(struct client *c, esp_event_loop_handle_t loop_handle) {
   struct sockaddr_storage remote_addr, local_addr;
   socklen_t remote_addrlen, local_addrlen = sizeof(local_addr);
   memset(c, 0, sizeof(*c));
@@ -852,7 +857,7 @@ static int client_init(struct client *c) {
 
   esp_timer_create_args_t timer_args = {
     .callback = timeout_cb,
-    .arg = c,    
+    .arg = loop_handle,    
     .dispatch_method = ESP_TIMER_TASK,
     .name = "timer"
   };
@@ -958,14 +963,7 @@ void print_heap_size() {
   ESP_LOGI("Heap check", "Current free heap size: %lu bytes", esp_get_free_heap_size());
 }
 
-void monitor_socket(void *handler_arg, esp_event_base_t event_base, int32_t event_id, void *event_data) {
-  ESP_LOGI("Event loop", "Event received: base=%s, id=%" PRId32, event_base, event_id);
-}
 
-ESP_EVENT_DEFINE_BASE(SOCKET_WATCHER_BASE);  
-enum {
-    SOCKET_WATCHER_ID = 2 
-};
 
 int uni_stream(TaskHandle_t main_task_handle) {
   struct client c;
@@ -988,11 +986,12 @@ int uni_stream(TaskHandle_t main_task_handle) {
 
   print_heap_size();  
   esp_event_handler_register_with(loop_handle, SOCKET_WATCHER_BASE, SOCKET_WATCHER_ID, read_cb_loop, (void *)&c);
+  esp_event_handler_register_with(loop_handle, TIMER_BASE, TIMER_ID, handle_timeout, (void *)&c);
 
   srandom((unsigned int)timestamp());
 
   ESP_LOGI(TAG, "creating QUIC client");
-  if (client_init(&c) != 0) {
+  if (client_init(&c, loop_handle) != 0) {
     exit(EXIT_FAILURE);
   } 
 
