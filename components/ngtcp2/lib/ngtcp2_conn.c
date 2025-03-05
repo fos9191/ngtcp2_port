@@ -73,8 +73,6 @@ static int bidi_stream(int64_t stream_id) { return (stream_id & 0x2) == 0; }
 #include <stdio.h>
 
 static void conn_update_timestamp(ngtcp2_conn *conn, ngtcp2_tstamp ts) {
-  printf("log.last_ts is %lld\n", conn->log.last_ts);
-  printf("qlog.last_ts is %lld\n", conn->qlog.last_ts);
   assert(conn->log.last_ts <= ts);
   assert(conn->qlog.last_ts <= ts);
 

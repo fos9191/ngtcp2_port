@@ -39,8 +39,8 @@
     #warning "Check components/wolfssl/include"
 #endif
 
-#define EXAMPLE_ESP_WIFI_SSID "fos fone"
-#define EXAMPLE_ESP_WIFI_PASS "martello1"
+#define EXAMPLE_ESP_WIFI_SSID "FancyWifi"
+#define EXAMPLE_ESP_WIFI_PASS "wirelessp"
 
 /* When there's too little heap, WiFi quietly refuses to connect */
 #define WIFI_LOW_HEAP_WARNING 21132
@@ -112,6 +112,7 @@ static EventGroupHandle_t s_wifi_event_group;
 #define WIFI_CONNECTED_BIT BIT0
 #define WIFI_FAIL_BIT      BIT1
 
+#define SHOW_SSID_AND_PASSWORD
 
 static int s_retry_num = 0;
 ip_event_got_ip_t* event;
@@ -198,7 +199,7 @@ int wifi_init_sta(void)
         ESP_LOGW(TAG, "  or did you forget the ESP-IDF configuration?");
     }
 #else
-    ESP_LOGW(TAG, "WARNING: CONFIG_EXAMPLE_WIFI_SSID not defined.");
+    //ESP_LOGW(TAG, "WARNING: CONFIG_EXAMPLE_WIFI_SSID not defined.");
 #endif
 
     ESP_ERROR_CHECK(esp_wifi_start() );

@@ -64,9 +64,7 @@
     #warning "Check components/wolfssl/include"
 #endif
 
-//#include <ev.h>
-
-#define REMOTE_HOST "172.20.10.3"
+#define REMOTE_HOST "192.168.0.81"
 #define REMOTE_PORT "4433"
 #define ALPN "\x2h3"
 
@@ -86,6 +84,9 @@ enum {
     SOCKET_WATCHER_ID = 2,
     TIMER_ID = 3
 };
+
+esp_event_loop_handle_t loop_handle;
+
 
 /*
  * Example 1: Handshake with www.google.com
@@ -653,6 +654,12 @@ static int client_write_streams(struct client *c) {
   return 0;
 }
 
+static void client_free(struct client *c) {
+  ngtcp2_conn_del(c->conn);
+  wolfSSL_free(c->ssl);
+  wolfSSL_CTX_free(c->ssl_ctx);
+  ESP_LOGI("client_free", "all client state freed");
+}
 
 static int client_write(struct client *c) {
   ngtcp2_tstamp expiry, now;
@@ -664,20 +671,13 @@ static int client_write(struct client *c) {
     return -1;
   }
 
-  printf("c in client_write is %p\n", (void*)c);
-  printf("in client_write c->conn is %p\n", (void*)c->conn);
-  printf("in handle_timeout c->fd is %d\n", c->fd);
-
   expiry = ngtcp2_conn_get_expiry(c->conn);
   now = timestamp();
 
   t = expiry < now ? 1e-9 : (expiry - now) / 1000;
-  printf("t is %lld\n", t);
-  printf("expiry time is %lld\n", expiry);
 
   // esp_timer calls require microseconds
   if (esp_timer_is_active(c->timer)) {
-    ESP_LOGI(TAG, "entering reset timer logic");
     esp_err_t ret = esp_timer_restart(c->timer, t);
     if (ret != ESP_OK) {
       ESP_LOGE(TAG, "esp_timer_restart failed: %s", esp_err_to_name(ret));
@@ -694,12 +694,15 @@ static int client_write(struct client *c) {
 
 
 static int client_handle_expiry(struct client *c) {
-  printf("client_handle_exp timestamp after timeout is %lld\n", timestamp());
-  printf("client_handle_exp c->conn is %p\n", (void*)c->conn);
   int rv = ngtcp2_conn_handle_expiry(c->conn, timestamp());
   if (rv != 0) {
     fprintf(stderr, "ngtcp2_conn_handle_expiry: %s\n", ngtcp2_strerror(rv));
     // todo : if error code is ERR_IDLE_CLOSE then close the connection
+    if (strcmp(ngtcp2_strerror(rv),"ERR_IDLE_CLOSE") == 0) {
+      ESP_LOGI(TAG, "closing connection due to no response from server");
+      client_free(c);
+      return 1; // client freed if returns 1
+    }
     return -1;
   }
 
@@ -736,7 +739,7 @@ fin:
 }
 
 // my read_cb function to test reading from the socket
-static void read_cb(struct client *c) {
+static void read_socket(struct client *c) {
     // Check if there is data to read from the client
     if (client_read(c) != 0) {
         ESP_LOGE("read_cb", "Error reading from client.");
@@ -751,16 +754,16 @@ static void read_cb(struct client *c) {
     }
 }
 
+// callback function to read from socket
 static void read_cb_loop(void *handler_arg, esp_event_base_t base, int32_t id, void *event_data) {
   struct client *c = (struct client *)handler_arg;
   if (c == NULL) {
     ESP_LOGE("read_cb_loop", "error passing client struct to read_cb_loop");
     return;
   }
-  printf("c in read_cb_loop is %p\n", (void*)c);
 
   ESP_LOGI("read_cb_loop", "event received - reading from socket");
-  read_cb(c);
+  read_socket(c);
 }
 
 static ngtcp2_conn *get_conn(ngtcp2_crypto_conn_ref *conn_ref) {
@@ -769,32 +772,17 @@ static ngtcp2_conn *get_conn(ngtcp2_crypto_conn_ref *conn_ref) {
 }
 
 void handle_timeout(void *arg) {
-  printf("arg in handle_timeout is %p\n", (void*)arg);
   struct client *c = (struct client *)arg;
   c->conn = get_conn(&c->conn_ref);
-  printf("c in handle_timeout is %p\n", (void*)c);
-  printf("in handle_timeout c->fd is %d\n", c->fd);
-  printf("in handle_timeout c->conn is %p\n", (void*)c->conn);
-  
-  ESP_LOGI(TAG, "in the timeout function");
+ 
+  ESP_LOGI(TAG, "timeout event occured");
 
-  if (client_handle_expiry(c) != 0) {
-    ESP_LOGE(TAG, "could not handle timer expiry");
-    return;
-  }
-
-  if (client_write(c) != 0) {
-    ESP_LOGE(TAG, "error with writing to client after timeout");
-    client_close(c);
-  }
-}
-
-
-void handle_timeout_loop(void *handler_arg, esp_event_base_t base, int32_t id, void *event_data) {
-  struct client *c = (struct client *)handler_arg;
-  printf("c in handle_timeout is %p\n", (void*)c);
-
-  if (client_handle_expiry(c) != 0) {
+  int ret = client_handle_expiry(c);
+  if (ret != 0) {
+    if (ret == 1) {
+      ESP_LOGE(TAG, "client closed");
+      return;
+    }
     ESP_LOGE(TAG, "could not handle timer expiry");
     return;
   }
@@ -808,13 +796,9 @@ void handle_timeout_loop(void *handler_arg, esp_event_base_t base, int32_t id, v
 // called on timeout of the timer in the client object 
 void timeout_cb(void *arg) {
   vTaskSuspend(main_task_handle);
-  printf("arg in timeout_cb is %p\n", (void*)arg);
   esp_event_post_to(arg, TIMER_BASE, TIMER_ID, NULL, 0, portMAX_DELAY);
-  //handle_timeout(arg);
   vTaskResume(main_task_handle);
 }
-
-
 
 static int client_init(struct client *c, esp_event_loop_handle_t loop_handle) {
   struct sockaddr_storage remote_addr, local_addr;
@@ -851,10 +835,6 @@ static int client_init(struct client *c, esp_event_loop_handle_t loop_handle) {
   c->conn_ref.get_conn = get_conn;
   c->conn_ref.user_data = c;
   
-  printf("c->conn is %p\n", (void*)c->conn);
-  printf("c is %p\n", (void*)c);
-
-
   esp_timer_create_args_t timer_args = {
     .callback = timeout_cb,
     .arg = loop_handle,    
@@ -871,11 +851,7 @@ static int client_init(struct client *c, esp_event_loop_handle_t loop_handle) {
 }
 
 
-static void client_free(struct client *c) {
-  ngtcp2_conn_del(c->conn);
-  wolfSSL_free(c->ssl);
-  wolfSSL_CTX_free(c->ssl_ctx);
-}
+
 
 struct sockaddr_in get_remote_addr() {
   struct sockaddr_in remote_addr;
@@ -893,12 +869,13 @@ struct sockaddr_in get_remote_addr() {
 }
 
 // creates and sends data over the stream specified
-int send_data(struct client * c, int64_t stream_id) {
+int send_data(struct client * c, int64_t stream_id, int packet_id) {
   int count = 0;
   ngtcp2_ssize size = NULL;
   uint8_t dest_buffer[1300];
   ngtcp2_vec data;
-  const char *hello_msg = "hello from client hello from client hello";
+  char hello_msg[100];
+  sprintf(hello_msg, "hello from client with my own packet_id : %d", packet_id);
   size_t msg_len = strlen(hello_msg) + 1; 
   data.base = (uint8_t *)malloc(msg_len);
   memcpy(data.base, hello_msg, msg_len);
@@ -963,11 +940,7 @@ void print_heap_size() {
   ESP_LOGI("Heap check", "Current free heap size: %lu bytes", esp_get_free_heap_size());
 }
 
-
-
-int uni_stream(TaskHandle_t main_task_handle) {
-  struct client c;
-
+int create_event_loop(struct client * c) {
   esp_event_loop_args_t loop_args = {
     .queue_size = 20,
     .task_name = NULL,
@@ -976,8 +949,8 @@ int uni_stream(TaskHandle_t main_task_handle) {
     .task_core_id = 0
   };
 
-  esp_event_loop_handle_t loop_handle;
   esp_err_t ret = esp_event_loop_create(&loop_args, &loop_handle);
+
   if (ret == ESP_OK) {
     ESP_LOGI(TAG, "event loop created successfully");
   } else {
@@ -985,8 +958,24 @@ int uni_stream(TaskHandle_t main_task_handle) {
   }
 
   print_heap_size();  
-  esp_event_handler_register_with(loop_handle, SOCKET_WATCHER_BASE, SOCKET_WATCHER_ID, read_cb_loop, (void *)&c);
-  esp_event_handler_register_with(loop_handle, TIMER_BASE, TIMER_ID, handle_timeout, (void *)&c);
+  esp_event_handler_register_with(loop_handle, SOCKET_WATCHER_BASE, SOCKET_WATCHER_ID, read_cb_loop, (void *)c);
+  esp_event_handler_register_with(loop_handle, TIMER_BASE, TIMER_ID, handle_timeout, (void *)c);
+  ESP_LOGI(TAG, "timer and socket event watchers registered");
+
+  if (ret == ESP_OK) {
+    return 0;
+  } else {
+    return -1;
+  }
+}
+
+
+int uni_stream(TaskHandle_t main_task_handle) {
+  struct client c;
+
+  if (create_event_loop(&c) != 0) {
+    exit(EXIT_FAILURE);
+  }
 
   srandom((unsigned int)timestamp());
 
@@ -1011,9 +1000,7 @@ int uni_stream(TaskHandle_t main_task_handle) {
     handshake = ngtcp2_conn_get_handshake_completed(c.conn);
     ESP_LOGI(TAG, "Handshake complete check (1 = success): %d", handshake);
     int ret = lwip_select(c.fd + 1, &read_fds, NULL, NULL, &timeout);
-    printf("ret is %d\n", ret);
     if (ret > 0) {
-      ESP_LOGI(TAG, "posting read event to event loop");
       esp_event_post_to(loop_handle, SOCKET_WATCHER_BASE, SOCKET_WATCHER_ID, NULL, 0, portMAX_DELAY);
     }
     esp_event_loop_run(loop_handle, pdMS_TO_TICKS(1000));
@@ -1032,7 +1019,7 @@ int uni_stream(TaskHandle_t main_task_handle) {
     ESP_LOGE(TAG, "failed to open unidirectional stream");
   }
   
-  if (send_data(&c, stream_id) == 0) {
+  if (send_data(&c, stream_id, 0) == 0) {
     ESP_LOGI(TAG, "sent data over stream : %lld", stream_id);
   } else {
     ESP_LOGE(TAG, "failed to send data over stream : %lld", stream_id);
@@ -1041,13 +1028,10 @@ int uni_stream(TaskHandle_t main_task_handle) {
   int count = 0;
 
   while (1) {
-    ESP_LOGI(TAG, "holding task open");
-
     FD_ZERO(&read_fds);
     FD_SET(c.fd, &read_fds);
 
     int ret = lwip_select(c.fd + 1, &read_fds, NULL, NULL, &timeout);
-    printf("ret is %d\n", ret);
     if (ret > 0) {
       ESP_LOGI(TAG, "posting read event to event loop");
       esp_event_post_to(loop_handle, SOCKET_WATCHER_BASE, SOCKET_WATCHER_ID, NULL, 0, portMAX_DELAY);
@@ -1055,7 +1039,7 @@ int uni_stream(TaskHandle_t main_task_handle) {
 
     if (count < 5){   
       count += 1;
-      if (send_data(&c, stream_id) == 0) {
+      if (send_data(&c, stream_id, count) == 0) {
         ESP_LOGI(TAG, "sent data over stream : %lld", stream_id);
       } else {
         ESP_LOGE(TAG, "failed to send data over stream : %lld", stream_id);
