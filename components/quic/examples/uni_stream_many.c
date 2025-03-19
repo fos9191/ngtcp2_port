@@ -879,6 +879,7 @@ int open_uni_stream(struct client * c, int64_t *stream_id) {
   return ngtcp2_conn_open_uni_stream(c->conn, stream_id, NULL);
 }
 
+
 // opens no_streams streams of type bidi or uni - type-0 = uni. type-1 = bidi 
 int open_streams(struct client * c, int64_t *stream_ids, int no_streams, int type) {
   int ret = -1;
@@ -904,7 +905,6 @@ int open_streams(struct client * c, int64_t *stream_ids, int no_streams, int typ
     return -1;
   }
 }
-
 
 int uni_streams_many() {
   struct client c;
@@ -962,4 +962,10 @@ int uni_streams_many() {
 
   return 0;
 }
+
+
+
+
+
+
 

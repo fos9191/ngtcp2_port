@@ -13,9 +13,8 @@
 #include "esp_sntp.h"
 #include <sys/time.h>
 
-
 #include <quic_init_client.h>
-#include <uni_stream.h>
+#include <test_streams.h>
 
 static const char* TAG = "app_main";
 
@@ -35,25 +34,6 @@ static const char* TAG = "app_main";
 
 TaskHandle_t main_task_handle = NULL;
 
-// set the system time to 2025 - so CA cert is in-date 
-void set_system_time() {
-    struct timeval tv;
-    struct tm tm_time = {
-        .tm_year = 2025 - 1900, 
-        .tm_mon  = 0,          
-        .tm_mday = 1,           
-        .tm_hour = 12,          
-        .tm_min  = 0,
-        .tm_sec  = 0
-    };
-
-    tv.tv_sec = mktime(&tm_time);
-    tv.tv_usec = 0;
-
-    settimeofday(&tv, NULL); 
-    printf("Time manually set to: %s", asctime(&tm_time));
-}
-
 void app_main_logic(void) {
     esp_err_t ret = 0;
     
@@ -68,13 +48,14 @@ void app_main_logic(void) {
             ESP_LOGI(TAG, "Trying WiFi again...");
             ret = wifi_init_sta();
         }
-
-    set_system_time();  
     
+    // to debug wolfssl - uncomment this line
     //wolfSSL_Debugging_ON();
-    //quic_init_client();
-    
-    uni_stream(main_task_handle);
+    int num_streams = 3;
+
+    test_streams(main_task_handle, 1, num_streams);
+
+    ESP_LOGI(TAG, "example complete");
     
     return;
 }
@@ -82,13 +63,17 @@ void app_main_logic(void) {
 void app_main_task(void *pvParameters) {
     main_task_handle = xTaskGetCurrentTaskHandle();
     app_main_logic();  // calls the main application logic
+    while(1) { // yield to scheduler - program is finished at this point
+        vTaskDelay(1000);
+    }
     vTaskDelete(NULL);
     return;
 }
 
 
-#define MAIN_TASK_STACK_SIZE 35000
+#define MAIN_TASK_STACK_SIZE 22000
 
 void app_main(void){
     xTaskCreate(app_main_task, "app_main_task", MAIN_TASK_STACK_SIZE, NULL, 5, NULL);
+    return;
 }

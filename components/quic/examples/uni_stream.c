@@ -533,7 +533,6 @@ static int client_read(struct client *c) {
     path.local.addr = (struct sockaddr *)&c->local_addr;
     path.remote.addrlen = msg.msg_namelen;
     path.remote.addr = msg.msg_name;
-    printf("calling ngtcp2_conn_read_pkt\n");
     rv = ngtcp2_conn_read_pkt(c->conn, &path, &pi, buf, (size_t)nread,
                               timestamp());
     if (rv != 0) {
@@ -801,6 +800,7 @@ void timeout_cb(void *arg) {
 }
 
 static int client_init(struct client *c, esp_event_loop_handle_t loop_handle) {
+  ESP_LOGI(TAG, "creating QUIC client");
   struct sockaddr_storage remote_addr, local_addr;
   socklen_t remote_addrlen, local_addrlen = sizeof(local_addr);
   memset(c, 0, sizeof(*c));
@@ -979,12 +979,10 @@ int uni_stream(TaskHandle_t main_task_handle) {
 
   srandom((unsigned int)timestamp());
 
-  ESP_LOGI(TAG, "creating QUIC client");
   if (client_init(&c, loop_handle) != 0) {
     exit(EXIT_FAILURE);
   } 
 
-  ESP_LOGI(TAG, "starting handshake");
   if (client_write(&c) != 0) {
     exit(EXIT_FAILURE);
   } 
@@ -1007,10 +1005,8 @@ int uni_stream(TaskHandle_t main_task_handle) {
     
     vTaskDelay(pdMS_TO_TICKS(500));
   }
-
   ESP_LOGI(TAG, "handshake finished");
 
-  esp_event_post_to(loop_handle, SOCKET_WATCHER_BASE, SOCKET_WATCHER_ID, NULL, 0, portMAX_DELAY);
 
   int64_t stream_id;
   if (open_uni_stream(&c, &stream_id) == 0) {
@@ -1018,15 +1014,8 @@ int uni_stream(TaskHandle_t main_task_handle) {
   } else {
     ESP_LOGE(TAG, "failed to open unidirectional stream");
   }
-  
-  if (send_data(&c, stream_id, 0) == 0) {
-    ESP_LOGI(TAG, "sent data over stream : %lld", stream_id);
-  } else {
-    ESP_LOGE(TAG, "failed to send data over stream : %lld", stream_id);
-  }
 
   int count = 0;
-
   while (1) {
     FD_ZERO(&read_fds);
     FD_SET(c.fd, &read_fds);

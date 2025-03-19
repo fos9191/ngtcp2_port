@@ -54,13 +54,6 @@ idf_component_register(
     PRIV_REQUIRES wolfssl 
 )
 
-# to help solve circular component issues - DIDNT WORK
-# message(STATUS "Component lib is ${COMPONENT_TARGET}")
-# set_property(TARGET ${COMPONENT_LIB} APPEND PROPERTY LINK_INTERFACE_MULTIPLICITY 4)
-
-# message(STATUS "${COMPONENT_TARGET} and ${CMAKE_SOURCE_DIR}/components/wolfssl/")
-#target_include_directories(${COMPONENT_TARGET} PRIVATE ${CMAKE_SOURCE_DIR}/components/wolfssl/wolfssl)
-
 message(STATUS "finished idf component register for ngtcp2 component")
 
 add_compile_definitions(OPENSSL_ALL)
@@ -146,13 +139,6 @@ message("CMAKE_C_FLAGS the end of ngtcp2 Cmake: ${CMAKE_C_FLAGS}")
 message(STATUS "************************************************************************************************")
 message(STATUS "                                  finished ngtcp2 config                                        ")
 message(STATUS "************************************************************************************************")
-
-
-#########################################################################################################
-#########################################################################################################
-# My code
-#########################################################################################################
-#########################################################################################################
 
 
 

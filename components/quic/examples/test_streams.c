@@ -51,6 +51,8 @@
 #include "lwip/netdb.h"
 #include "lwip/dns.h"
 
+#include "ngtcp2_port.h"
+
 // must include wolfssl/settings.h before any other wolfssl files
 #include <wolfssl/wolfcrypt/settings.h> 
 #include <wolfssl/openssl/ssl.h>
@@ -62,9 +64,7 @@
     #warning "Check components/wolfssl/include"
 #endif
 
-//#include <ev.h>
-
-#define REMOTE_HOST "172.20.10.3"
+#define REMOTE_HOST "192.168.0.81"
 #define REMOTE_PORT "4433"
 #define ALPN "\x2h3"
 
@@ -72,11 +72,20 @@
 #define TEST_UDP_PORT "4433"
 //#define MESSAGE "GET /\r\n"
 
-static const char *TAG = "quic_client_init";
+static const char *TAG = "test_streams";
 
 // define esp event base for event management
 ESP_EVENT_DEFINE_BASE(MY_EVENT_BASE);
 #define MY_EVENT_ID_READ 0
+
+ESP_EVENT_DEFINE_BASE(SOCKET_WATCHER_BASE);  
+ESP_EVENT_DEFINE_BASE(TIMER_BASE);  
+enum {
+    SOCKET_WATCHER_ID = 2,
+    TIMER_ID = 3
+};
+
+esp_event_loop_handle_t loop_handle;
 
 
 /*
@@ -89,7 +98,6 @@ ESP_EVENT_DEFINE_BASE(MY_EVENT_BASE);
  * and undefine MESSAGE macro.
  */
 #include "esp_heap_caps.h"
-
 
 
 static uint64_t timestamp(void) {
@@ -186,7 +194,10 @@ struct client {
   ngtcp2_ccerr last_error;
   
   uint64_t timestamp_us;
+
+  esp_timer_handle_t timer;
 };
+
 
 static int numeric_host_family(const char *hostname, int family) {
   uint8_t dst[sizeof(struct in6_addr)];
@@ -197,22 +208,6 @@ static int numeric_host(const char *hostname) {
   return numeric_host_family(hostname, AF_INET) ||
          numeric_host_family(hostname, AF_INET6);
 }
-
-#include <stdio.h>
-#include <time.h>
-
-void print_system_time() {
-    time_t now;
-    struct tm timeinfo;
-
-    time(&now);
-    localtime_r(&now, &timeinfo);
-
-    printf("Current time: %04d-%02d-%02d %02d:%02d:%02d\n",
-           timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday,
-           timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
-}
-
 
 void send_udp_burst(int sockfd, struct sockaddr_in *server_addr) {
   const char *msg = "test udp packets";
@@ -282,7 +277,6 @@ static int client_ssl_init(struct client *c) {
           "bo2ViNrwZTbhuJbv1wxI\n" \
           "-----END CERTIFICATE-----\n";
           
-  print_system_time();
   if (wolfSSL_CTX_load_verify_buffer(c->ssl_ctx, (const byte*)promCert, strlen(promCert), WOLFSSL_FILETYPE_PEM) != WOLFSSL_SUCCESS) {
       fprintf(stderr, "error loading CA certificate\n");
       return -1;
@@ -392,6 +386,22 @@ static void log_printf(void *user_data, const char *fmt, ...) {
   fprintf(stderr, "\n");
 }
 
+int ngtcp2_recv_stream_data_cb(ngtcp2_conn *conn, uint32_t flags,
+                                        int64_t stream_id, uint64_t offset,
+                                        const uint8_t *data, size_t datalen,
+                                        void *user_data, void *stream_user_data){
+  ESP_LOGI("received_stream", "received stream data callback");
+
+  printf("Received %zu bytes on stream %lld\n", datalen, stream_id);
+  printf("%.*s", (int)datalen, data);
+
+  if (flags & NGTCP2_STREAM_DATA_FLAG_FIN) {
+    printf("End of stream %lld (FIN flag set)\n", stream_id);
+  }
+
+  return 0;
+}
+
 static int client_quic_init(struct client *c,
                             const struct sockaddr *remote_addr,
                             socklen_t remote_addrlen,
@@ -417,7 +427,7 @@ static int client_quic_init(struct client *c,
     ngtcp2_crypto_encrypt_cb,
     ngtcp2_crypto_decrypt_cb,
     ngtcp2_crypto_hp_mask_cb,
-    NULL, /* recv_stream_data */
+    ngtcp2_recv_stream_data_cb, /* recv_stream_data */
     NULL, /* acked_stream_data_offset */
     NULL, /* stream_open */
     NULL, /* stream_close */
@@ -521,7 +531,6 @@ static int client_read(struct client *c) {
     path.local.addr = (struct sockaddr *)&c->local_addr;
     path.remote.addrlen = msg.msg_namelen;
     path.remote.addr = msg.msg_name;
-    printf("calling ngtcp2_conn_read_pkt\n");
     rv = ngtcp2_conn_read_pkt(c->conn, &path, &pi, buf, (size_t)nread,
                               timestamp());
     if (rv != 0) {
@@ -642,13 +651,31 @@ static int client_write_streams(struct client *c) {
   return 0;
 }
 
+static void client_free(struct client *c) {
+  ngtcp2_conn_del(c->conn);
+  wolfSSL_free(c->ssl);
+  wolfSSL_CTX_free(c->ssl_ctx);
+  ESP_LOGI("client_free", "all client state freed");
+}
+
+static void reset_timer(struct client *c, ngtcp2_tstamp expiry, uint64_t t) {
+  if (esp_timer_is_active(c->timer)) {
+    esp_err_t ret = esp_timer_restart(c->timer, t);
+    if (ret != ESP_OK) {
+      ESP_LOGE(TAG, "esp_timer_restart failed: %s", esp_err_to_name(ret));
+    }
+    ESP_LOGI(TAG, "setting client timer");
+  } else {
+    ESP_LOGI(TAG, "entering start timer logic");
+    esp_err_t ret = esp_timer_start_once(c->timer, expiry/1000); // /1000 for nanoseconds
+  }
+}
 
 static int client_write(struct client *c) {
   ngtcp2_tstamp expiry, now;
-  int64_t t;
+  uint64_t t;
 
   
-
   if (client_write_streams(c) != 0) {
     ESP_LOGE(TAG, "client_write_streams failed");
     return -1;
@@ -657,10 +684,10 @@ static int client_write(struct client *c) {
   expiry = ngtcp2_conn_get_expiry(c->conn);
   now = timestamp();
 
-  t = expiry < now ? 1e-9 : (expiry - now) / NGTCP2_SECONDS;
+  t = expiry < now ? 1e-9 : (expiry - now) / 1000;
 
-  //c->timer.repeat = t;
-  //esp_timer_start_once(&c->timer, t);
+  // esp_timer calls require microseconds
+  reset_timer(c, expiry, t);
 
   return 0;
 }
@@ -671,6 +698,12 @@ static int client_handle_expiry(struct client *c) {
   int rv = ngtcp2_conn_handle_expiry(c->conn, timestamp());
   if (rv != 0) {
     fprintf(stderr, "ngtcp2_conn_handle_expiry: %s\n", ngtcp2_strerror(rv));
+    // todo : if error code is ERR_IDLE_CLOSE then close the connection
+    if (strcmp(ngtcp2_strerror(rv),"ERR_IDLE_CLOSE") == 0) {
+      ESP_LOGI(TAG, "closing connection due to no response from server");
+      client_free(c);
+      return 1; // client freed if returns 1
+    }
     return -1;
   }
 
@@ -707,7 +740,7 @@ fin:
 }
 
 // my read_cb function to test reading from the socket
-static void read_cb(struct client *c) {
+static void read_socket(struct client *c) {
     // Check if there is data to read from the client
     if (client_read(c) != 0) {
         ESP_LOGE("read_cb", "Error reading from client.");
@@ -717,9 +750,21 @@ static void read_cb(struct client *c) {
 
     // If reading was successful, attempt to write back to the client
     if (client_write(c) != 0) {
-        ESP_LOGE("read_cb", "Error writing to client.");
-        //client_close(c);
+        ESP_LOGE("read_cb", "Error writing.");
+        client_close(c);
     }
+}
+
+// callback function to read from socket
+static void read_cb_loop(void *handler_arg, esp_event_base_t base, int32_t id, void *event_data) {
+  struct client *c = (struct client *)handler_arg;
+  if (c == NULL) {
+    ESP_LOGE("read_cb_loop", "error passing client struct to read_cb_loop");
+    return;
+  }
+
+  ESP_LOGI("read_cb_loop", "event received - reading from socket");
+  read_socket(c);
 }
 
 static ngtcp2_conn *get_conn(ngtcp2_crypto_conn_ref *conn_ref) {
@@ -727,45 +772,37 @@ static ngtcp2_conn *get_conn(ngtcp2_crypto_conn_ref *conn_ref) {
   return c->conn;
 }
 
-// this function should read from the socket (c->fd)
-void socket_read_task(void *param) {
-    struct client *c = (struct client *)param;
-    fd_set read_fds;
-    struct timeval timeout;
+void handle_timeout(void *arg) {
+  struct client *c = (struct client *)arg;
+  c->conn = get_conn(&c->conn_ref);
+ 
+  ESP_LOGI(TAG, "timeout event occured");
 
-    if (c->fd < 0) {
-        printf("Invalid file descriptor: %d\n", c->fd);
-        return;
+  int ret = client_handle_expiry(c);
+  if (ret != 0) {
+    if (ret == 1) {
+      ESP_LOGE(TAG, "client closed");
+      return;
     }
+    ESP_LOGE(TAG, "could not handle timer expiry");
+    return;
+  }
 
-    int flags = fcntl(c->fd, F_GETFL, 0);
-    if (flags & O_NONBLOCK) {
-        ESP_LOGI(TAG, "Socket is in non-blocking mode");
-    } else {
-      ESP_LOGI(TAG, "Socket is in blocking mode");
-    }
-
-    while (1) {
-        FD_ZERO(&read_fds);
-        FD_SET(c->fd, &read_fds);
-
-        timeout.tv_sec = 1;  // ?? why
-        timeout.tv_usec = 0;
-        
-        //printf("fd_isset is : %ld\n", FD_ISSET(c->fd, &read_fds));
-        int ret = lwip_select(c->fd + 1, &read_fds, NULL, NULL, &timeout);
-        if (ret > 0) {
-            //ESP_LOGI(TAG, "reading from socket");
-            read_cb(c); // read from socket
-        } 
-
-        vTaskDelay(pdMS_TO_TICKS(100));  // delay for 10ms so that we yield to scheduler
-    }
-
-    vTaskDelete(NULL);
+  if (client_write(c) != 0) {
+    ESP_LOGE(TAG, "error with writing to client after timeout");
+    client_close(c);
+  }
 }
 
-static int client_init(struct client *c) {
+// called on timeout of the timer in the client object 
+void timeout_cb(void *arg) {
+  vTaskSuspend(main_task_handle);
+  esp_event_post_to(arg, TIMER_BASE, TIMER_ID, NULL, 0, portMAX_DELAY);
+  vTaskResume(main_task_handle);
+}
+
+static int client_init(struct client *c, esp_event_loop_handle_t loop_handle) {
+  ESP_LOGI(TAG, "creating QUIC client");
   struct sockaddr_storage remote_addr, local_addr;
   socklen_t remote_addrlen, local_addrlen = sizeof(local_addr);
   memset(c, 0, sizeof(*c));
@@ -800,28 +837,21 @@ static int client_init(struct client *c) {
   c->conn_ref.get_conn = get_conn;
   c->conn_ref.user_data = c;
   
-  /*
-  this code initializes and starts an I/O watcher on a file descriptor (c->fd) 
-  to monitor for readability. When data becomes available on this file descriptor, 
-  the specified callback (read_cb) will be invoked.
+  esp_timer_create_args_t timer_args = {
+    .callback = timeout_cb,
+    .arg = loop_handle,    
+    .dispatch_method = ESP_TIMER_TASK,
+    .name = "timer"
+  };
 
-  ev_io_init(&c->rev, read_cb, c->fd, EV_READ);
-  c->rev.data = c;
-  ev_io_start(EV_DEFAULT, &c->rev);
-
-  ev_timer_init(&c->timer, timer_cb, 0., 0.);
-  c->timer.data = c;
-  */
+  esp_err_t ret = esp_timer_create(&timer_args, &c->timer);
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to create timer");
+  } 
 
   return 0;
 }
 
-
-static void client_free(struct client *c) {
-  ngtcp2_conn_del(c->conn);
-  wolfSSL_free(c->ssl);
-  wolfSSL_CTX_free(c->ssl_ctx);
-}
 
 struct sockaddr_in get_remote_addr() {
   struct sockaddr_in remote_addr;
@@ -838,66 +868,18 @@ struct sockaddr_in get_remote_addr() {
   return remote_addr;
 }
 
-// creates and sends data over the stream specified
-int send_data(struct client * c, int64_t stream_id) {
-  int count = 0;
-  ngtcp2_ssize size = NULL;
-  uint8_t dest_buffer[1300];
-  ngtcp2_vec data;
-  const char *hello_msg = "hello from client hello from client hello from client hello from client";
-  size_t msg_len = strlen(hello_msg) + 1; 
-  data.base = (uint8_t *)malloc(msg_len);
-  memcpy(data.base, hello_msg, msg_len);
-  data.len = msg_len;
-  uint64_t now = timestamp();
 
-  size = ngtcp2_conn_writev_stream(c->conn, NULL, NULL, dest_buffer, sizeof(dest_buffer), 
-                                                NULL, NULL, stream_id, &data, 1, now);
-  if (size < 0) {
-    ESP_LOGE(TAG, "error writing to stream");
-  }
-  
-  struct sockaddr_in remote_addr = get_remote_addr();
-  
-  ssize_t sent_bytes = sendto(c->fd, dest_buffer, size, 0, (struct sockaddr *)&remote_addr, sizeof(remote_addr));
-  if (sent_bytes < 0) {
-      perror("sendto failed");
-      free(data.base);
-      return -1;
-    }
-
-  return 0;
-}
 
 // opens a bidirectional stream
-int open_bidi_stream(struct client * c, int64_t *stream_id) {
-  return ngtcp2_conn_open_bidi_stream(c->conn, stream_id, NULL);
-}
-
-// opens a unidirectional stream
-int open_uni_stream(struct client * c, int64_t *stream_id) {
-  return ngtcp2_conn_open_uni_stream(c->conn, stream_id, NULL);
-}
-
-// opens no_streams streams of type bidi or uni - type-0 = uni. type-1 = bidi 
-int open_streams(struct client * c, int64_t *stream_ids, int no_streams, int type) {
+int open_bidi_stream(struct client * c, int64_t *stream_id, int stream_no) {
   int ret = -1;
-  int (*open_stream)(struct client *, int64_t *) = NULL;
-  void (*stream_funcs[2])() = {open_uni_stream, open_bidi_stream};
-
-  if (type == 0 || type == 1) {
-    open_stream = stream_funcs[type];
-  } else {
-    ESP_LOGE(TAG, "error picking stream type. use type = 0 for uni stream, type = 1 for bidi stream");
-    return -1;
-  }
-
-  for(int i = 0; i < no_streams; i++) {
-    ret = open_stream(c, &stream_ids[i]);
+  for(int i = 0; i < stream_no; i++) {
+    ret = ngtcp2_conn_open_bidi_stream(c->conn, &stream_id[i], NULL);
+    ESP_LOGI(TAG, "opened bidi stream with stream id : %lld", stream_id[i]);
   }
 
   if (ret == 0) {
-    ESP_LOGI(TAG, "successfully opened %d streams", no_streams);
+    ESP_LOGI(TAG, "successfully opened %d bidi streams", stream_no);
     return 0;
   } else {
     ESP_LOGE(TAG, "error opening streams");
@@ -905,19 +887,150 @@ int open_streams(struct client * c, int64_t *stream_ids, int no_streams, int typ
   }
 }
 
+// opens a unidirectional stream
+int open_uni_stream(struct client * c, int64_t *stream_id, int stream_no) {
+  int ret = -1;
+  for(int i = 0; i < stream_no; i++) {
+    ret = ngtcp2_conn_open_uni_stream(c->conn, &stream_id[i], NULL);
+    ESP_LOGI(TAG, "opened uni stream with stream id : %lld", stream_id[i]);
+  }
 
-int quic_init_client() {
+  if (ret == 0) {
+    ESP_LOGI(TAG, "successfully opened %d uni streams", stream_no);
+    return 0;
+  } else {
+    ESP_LOGE(TAG, "error opening streams");
+    return -1;
+  }
+}
+
+void print_heap_size() {
+  ESP_LOGI("Heap check", "Current free heap size: %lu bytes", esp_get_free_heap_size());
+}
+
+int create_event_loop(struct client * c) {
+  esp_event_loop_args_t loop_args = {
+    .queue_size = 20,
+    .task_name = NULL,
+    .task_priority = 8,
+    .task_stack_size = 4096,
+    .task_core_id = 0
+  };
+
+  esp_err_t ret = esp_event_loop_create(&loop_args, &loop_handle);
+
+  if (ret == ESP_OK) {
+    ESP_LOGI(TAG, "event loop created successfully");
+  } else {
+    ESP_LOGE(TAG, "event loop creation failed");
+  }
+
+  print_heap_size();  
+  esp_event_handler_register_with(loop_handle, SOCKET_WATCHER_BASE, SOCKET_WATCHER_ID, read_cb_loop, (void *)c);
+  esp_event_handler_register_with(loop_handle, TIMER_BASE, TIMER_ID, handle_timeout, (void *)c);
+  ESP_LOGI(TAG, "timer and socket event watchers registered");
+
+  if (ret == ESP_OK) {
+    return 0;
+  } else {
+    return -1;
+  }
+}
+
+void check_socket(struct client * c, esp_event_loop_handle_t loop_handle) {
+  fd_set read_fds;
+  struct timeval timeout;
+
+  FD_ZERO(&read_fds);
+  FD_SET(c->fd, &read_fds);
+
+  int ret = lwip_select(c->fd + 1, &read_fds, NULL, NULL, &timeout);
+  if (ret > 0) {
+    esp_event_post_to(loop_handle, SOCKET_WATCHER_BASE, SOCKET_WATCHER_ID, NULL, 0, portMAX_DELAY);
+  }
+  esp_event_loop_run(loop_handle, pdMS_TO_TICKS(400));
+  return;
+}
+
+// sends test data over the streams given 
+int send_stream_data(struct client * c, int64_t *stream_ids, int stream_no, esp_event_loop_handle_t loop_handle) {
+  ngtcp2_tstamp expiry, now;
+  uint64_t t;
+
+  for (int i = 0; i < 5; i++) { 
+    check_socket(c, loop_handle);
+    for (int k = 0; k < stream_no; k++) {
+      ngtcp2_ssize size = NULL;
+      uint8_t dest_buffer[1300];
+      ngtcp2_vec data;
+      char hello_msg[100];
+      sprintf(hello_msg, "hello from client with i = %d", i);
+      size_t msg_len = strlen(hello_msg) + 1; 
+      data.base = (uint8_t *)malloc(msg_len);
+      memcpy(data.base, hello_msg, msg_len);
+      data.len = msg_len;
+
+      size = ngtcp2_conn_writev_stream(c->conn, NULL, NULL, dest_buffer, sizeof(dest_buffer), 
+                                      NULL, NULL, stream_ids[k], &data, 1, timestamp());
+
+      if (size < 0) {
+        ESP_LOGE(TAG, "error writing to stream");
+      }
+
+      struct sockaddr_in remote_addr = get_remote_addr();
+      ssize_t sent_bytes = sendto(c->fd, dest_buffer, size, 0, (struct sockaddr *)&remote_addr, sizeof(remote_addr));
+      if (sent_bytes < 0) {
+        ESP_LOGE(TAG, "sendto failed");
+        free(data.base);
+        return -1;
+      } else {
+        ESP_LOGI(TAG, "send packet");
+        // set timer to smallest expiry time
+        expiry = ngtcp2_conn_get_expiry(c->conn);
+        now = timestamp();
+        t = expiry < now ? 1e-9 : (expiry - now) / 1000; // if timer is already gone then set t to 1e-9, else set to difference
+        ESP_LOGI(TAG, "expiry is %lld", t);
+        reset_timer(c, expiry, t);
+      }
+    }
+  }
+
+  return 0;
+}
+
+void check_memory() {
+  size_t total_heap = heap_caps_get_total_size(MALLOC_CAP_8BIT);
+  size_t free_heap = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+  size_t min_free_heap = heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT);
+
+  UBaseType_t high_water_mark = uxTaskGetStackHighWaterMark(NULL);
+
+  printf("Total heap: %d bytes, Free heap: %d bytes, Min free heap: %d bytes\n", total_heap, free_heap, min_free_heap);
+  printf("Task stack high water mark: %d words\n", high_water_mark);
+}
+
+
+
+// test_streams - tests multiple streams by creating them, sending data over each stream, closing streams
+// stream_type 0 = uni, stream_type 1 = bidi
+int test_streams(TaskHandle_t main_task_handle, int stream_type, int stream_num) {
   struct client c;
+  // initialisation
+  if (create_event_loop(&c) != 0) {
+    exit(EXIT_FAILURE);
+  }
 
   srandom((unsigned int)timestamp());
 
-  ESP_LOGI(TAG, "creating QUIC client");
-  if (client_init(&c) != 0) {
+  if (client_init(&c, loop_handle) != 0) {
     exit(EXIT_FAILURE);
   } 
 
-  
+  if (client_write(&c) != 0) {
+    exit(EXIT_FAILURE);
+  } 
 
+  // handshake
   fd_set read_fds;
   struct timeval timeout;
   int handshake = 0;
@@ -925,59 +1038,67 @@ int quic_init_client() {
   while (!handshake) {
     FD_ZERO(&read_fds);
     FD_SET(c.fd, &read_fds);
-    
-    ESP_LOGI(TAG, "starting handshake");
-    if (client_write(&c) != 0) {
-      exit(EXIT_FAILURE);
-    } 
-    vTaskDelay(pdMS_TO_TICKS(10));
-    // if handshake is complete this will output 1 - rn it outputs 0
+
     handshake = ngtcp2_conn_get_handshake_completed(c.conn);
     ESP_LOGI(TAG, "Handshake complete check (1 = success): %d", handshake);
-    
+
     int ret = lwip_select(c.fd + 1, &read_fds, NULL, NULL, &timeout);
     if (ret > 0) {
-        ESP_LOGI(TAG, "reading from socket");
-        read_cb(&c); // read from socket
-    } 
+      esp_event_post_to(loop_handle, SOCKET_WATCHER_BASE, SOCKET_WATCHER_ID, NULL, 0, portMAX_DELAY);
+    }
+    esp_event_loop_run(loop_handle, pdMS_TO_TICKS(1000));
     
-    vTaskDelay(pdMS_TO_TICKS(1000)); 
+    vTaskDelay(pdMS_TO_TICKS(200));
   }
   ESP_LOGI(TAG, "handshake finished");
 
-
-  // open 5 uni streams
-  int no_streams = 5;
-  int64_t * stream_ids = malloc(no_streams * sizeof(int64_t));
-  /*
-  for (int i = 0; i < no_streams; i++) {
-    stream_ids[i] = i + 1; 
-    printf("stream_id[%d] is %lld\n", i, stream_ids[i]);
-  }
-  */
+  // creating streams & sending stream data
+  int64_t * stream_ids = malloc(stream_num * sizeof(int64_t));
+  assert(stream_ids != NULL);
   
-  if (open_streams(&c, stream_ids, no_streams, 0) == 0) {
-    ESP_LOGI(TAG, "opened %d streams", no_streams);
-  } else {
-    ESP_LOGE(TAG, "failed to open streams");
+  switch (stream_type) {
+    case 0: // unidirectional stream
+      printf("Before open_uni_stream, stream_num = %d\n", stream_num);
+      if (open_uni_stream(&c, &stream_ids, stream_num) != 0) {
+          exit(EXIT_FAILURE);
+      }
+      printf("After open_uni_stream, stream_num = %d\n", stream_num);
+
+      if (send_stream_data(&c, &stream_ids, 3, loop_handle) == 0) {
+        ESP_LOGI(TAG, "sent data over stream(s)");
+      } else {
+        ESP_LOGE(TAG, "failed to send data over stream(s)");
+      }
+      break;
+
+    case 1: // bidirectional stream
+      if (open_bidi_stream(&c, &stream_ids, stream_num) != 0) {
+        exit(EXIT_FAILURE);
+      } 
+      if (send_stream_data(&c, &stream_ids, 3, loop_handle) == 0) {
+        ESP_LOGI(TAG, "sent data over stream(s)");
+      } else {
+        ESP_LOGE(TAG, "failed to send data over stream(s)");
+      }
+      break;
   }
 
-  int64_t stream_id;
-  if (open_bidi_stream(&c, &stream_id) == 0) {
-    ESP_LOGI(TAG, "bidirection stream opened");
-  } else {
-    ESP_LOGE(TAG, "failed to open bidirectional stream");
+  // keep connection open for some time
+  int count = 0;
+  while (count < 10) {
+    handshake = ngtcp2_conn_get_handshake_completed(c.conn);
+    ESP_LOGI(TAG, "Keeping connection alive");
+    check_socket(&c, loop_handle);
+    
+    count += 1;
+    vTaskDelay(pdMS_TO_TICKS(200));
   }
-  
-  if (send_data(&c, stream_id) == 0) {
-    ESP_LOGI(TAG, "sent data over stream : %lld", stream_id);
-  } else {
-    ESP_LOGE(TAG, "failed to send data over stream : %lld", stream_id);
-  }
-  
- 
-  //client_free(&c);
-  //ESP_LOGI(TAG, "client freed");
 
+  // closing connection
+  client_close(&c);
+  client_free(&c);
+  
+  ESP_LOGI(TAG, "connection closed and client freed");
   return 0;
 }
+

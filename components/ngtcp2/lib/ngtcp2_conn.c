@@ -1624,7 +1624,7 @@ void ngtcp2_conn_del(ngtcp2_conn *conn) {
   ngtcp2_pq_free(&conn->scid.used);
   delete_scid(&conn->scid.set, conn->mem);
   ngtcp2_ksl_free(&conn->scid.set);
-  ngtcp2_gaptr_free(&conn->dcid.seqgap);
+  // ngtcp2_gaptr_free(&conn->dcid.seqgap);
 
   ngtcp2_objalloc_free(&conn->strm_objalloc);
   ngtcp2_objalloc_free(&conn->rtb_entry_objalloc);
