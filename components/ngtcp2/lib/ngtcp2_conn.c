@@ -2885,7 +2885,6 @@ static ngtcp2_ssize conn_write_handshake_pkts(ngtcp2_conn *conn,
        
     // problem is here - the handshake is not complete when it should be considered complete   
     int test = ngtcp2_conn_get_handshake_completed(conn);
-    printf("Handshake completed: %d\n", test);
         
     ngtcp2_conn_discard_initial_state(conn, ts);
   }
