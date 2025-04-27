@@ -64,12 +64,11 @@
     #warning "Check components/wolfssl/include"
 #endif
 
-#define REMOTE_HOST "192.168.0.81"
-#define REMOTE_PORT "4433"
+#define REMOTE_HOST "192.168.0.81" // change this to be the ip addr of the machine running quic_server.py
+#define REMOTE_PORT "4433" // ensure this is the same as the port in quic_server.py
 #define ALPN "\x2h3"
 
-#define TEST_UDP_IP "172.20.10.3"
-#define TEST_UDP_PORT "4433"
+
 //#define MESSAGE "GET /\r\n"
 
 static const char *TAG = "test_streams";
@@ -157,12 +156,8 @@ end:
 void check_memory() {
   size_t total_heap = heap_caps_get_total_size(MALLOC_CAP_8BIT);
   size_t free_heap = heap_caps_get_free_size(MALLOC_CAP_8BIT);
-  size_t min_free_heap = heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT);
 
-  UBaseType_t high_water_mark = uxTaskGetStackHighWaterMark(NULL);
-
-  printf("Total heap: %d bytes, Free heap: %d bytes, Min free heap: %d bytes\n", total_heap, free_heap, min_free_heap);
-  printf("Task stack high water mark: %d words\n", high_water_mark);
+  printf("Total heap: %d bytes, Free heap: %d bytes", total_heap, free_heap);
 }
 
 static int connect_sock(struct sockaddr *local_addr, socklen_t *plocal_addrlen,
@@ -828,7 +823,6 @@ static int client_init(struct client *c, esp_event_loop_handle_t loop_handle) {
     return -1;
   }
   ESP_LOGI(TAG, "after creating socket");
-  check_memory();
 
   if (connect_sock((struct sockaddr *)&local_addr, &local_addrlen, c->fd,
                    (struct sockaddr *)&remote_addr, remote_addrlen) != 0) {
@@ -842,14 +836,12 @@ static int client_init(struct client *c, esp_event_loop_handle_t loop_handle) {
     return -1;
   }
   ESP_LOGI(TAG, "after SSL init");
-  check_memory();
 
   if (client_quic_init(c, (struct sockaddr *)&remote_addr, remote_addrlen,
                        (struct sockaddr *)&local_addr, local_addrlen) != 0) {
     return -1;
   }
   ESP_LOGI(TAG, "after quic object init");
-  check_memory();
   c->stream.stream_id = -1;
 
   c->conn_ref.get_conn = get_conn;
@@ -868,7 +860,6 @@ static int client_init(struct client *c, esp_event_loop_handle_t loop_handle) {
   } 
   
   ESP_LOGI(TAG, "after timer task created");
-  check_memory();
   return 0;
 }
 
@@ -979,7 +970,6 @@ int send_stream_data(struct client * c, int64_t *stream_ids, int stream_no, esp_
 
   for (int i = 0; i < 5; i++) { 
     check_socket(c, loop_handle);
-    check_memory();
     for (int k = 0; k < stream_no; k++) {
       ngtcp2_ssize size = NULL;
       uint8_t dest_buffer[1300];
@@ -997,7 +987,6 @@ int send_stream_data(struct client * c, int64_t *stream_ids, int stream_no, esp_
       if (size < 0) {
         ESP_LOGE(TAG, "error writing to stream");
       }
-      check_memory();
       struct sockaddr_in remote_addr = get_remote_addr();
       ssize_t sent_bytes = sendto(c->fd, dest_buffer, size, 0, (struct sockaddr *)&remote_addr, sizeof(remote_addr));
       if (sent_bytes < 0) {
@@ -1019,26 +1008,21 @@ int send_stream_data(struct client * c, int64_t *stream_ids, int stream_no, esp_
 }
 
 
-
-
 // test_streams - tests multiple streams by creating them, sending data over each stream, closing streams
 // stream_type 0 = uni, stream_type 1 = bidi
 int test_streams(TaskHandle_t main_task_handle, int stream_type, int stream_num) {
-  check_memory();
   struct client c;
   // initialisation
   if (create_event_loop(&c) != 0) {
     exit(EXIT_FAILURE);
   }
   ESP_LOGI(TAG, "after creating event loop");
-  check_memory();
   srandom((unsigned int)timestamp());
 
   if (client_init(&c, loop_handle) != 0) {
     exit(EXIT_FAILURE);
   } 
   ESP_LOGI(TAG, "after client init");
-  check_memory();
 
   ESP_LOGI(TAG, "starting handshake");
   if (client_write(&c) != 0) {
@@ -1052,7 +1036,6 @@ int test_streams(TaskHandle_t main_task_handle, int stream_type, int stream_num)
 
   while (!handshake) {
     ESP_LOGI(TAG, "during handshake");
-    check_memory();
 
     FD_ZERO(&read_fds);
     FD_SET(c.fd, &read_fds);
@@ -1070,7 +1053,6 @@ int test_streams(TaskHandle_t main_task_handle, int stream_type, int stream_num)
   }
   ESP_LOGI(TAG, "handshake finished");
   ESP_LOGI(TAG, "after handshake");
-  check_memory();
 
   // creating streams & sending stream data
   int64_t * stream_ids = malloc(stream_num * sizeof(int64_t));
@@ -1084,7 +1066,7 @@ int test_streams(TaskHandle_t main_task_handle, int stream_type, int stream_num)
       }
       printf("After open_uni_stream, stream_num = %d\n", stream_num);
 
-      if (send_stream_data(&c, &stream_ids, 3, loop_handle) == 0) {
+      if (send_stream_data(&c, &stream_ids, 3, loop_handle) == 0) { // issue with stream_num variable... hardcoded for the moment
         ESP_LOGI(TAG, "sent data over stream(s)");
       } else {
         ESP_LOGE(TAG, "failed to send data over stream(s)");
@@ -1096,14 +1078,12 @@ int test_streams(TaskHandle_t main_task_handle, int stream_type, int stream_num)
         exit(EXIT_FAILURE);
       } 
       ESP_LOGI(TAG, "after opening stream");
-      check_memory();
-      if (send_stream_data(&c, &stream_ids, 3, loop_handle) == 0) {
+      if (send_stream_data(&c, &stream_ids, 3, loop_handle) == 0) { // issue with stream_num variable... hardcoded for the moment
         ESP_LOGI(TAG, "sent data over stream(s)");
       } else {
         ESP_LOGE(TAG, "failed to send data over stream(s)");
       }
       ESP_LOGI(TAG, "after sending data over stream");
-      check_memory();
       break;
   }
 
@@ -1122,7 +1102,6 @@ int test_streams(TaskHandle_t main_task_handle, int stream_type, int stream_num)
   client_free(&c);
 
   ESP_LOGI(TAG, "after freeing memory");
-  check_memory();
   
   ESP_LOGI(TAG, "connection closed and client freed");
   return 0;

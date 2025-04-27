@@ -64,12 +64,10 @@
     #warning "Check components/wolfssl/include"
 #endif
 
-#define REMOTE_HOST "192.168.0.81"
-#define REMOTE_PORT "4433"
+#define REMOTE_HOST "192.168.0.81" // change this to be the ip addr of the machine running quic_server.py
+#define REMOTE_PORT "4433" // ensure this is the same as the port in quic_server.py
 #define ALPN "\x2h3"
 
-#define TEST_UDP_IP "10.6.143.42"
-#define TEST_UDP_PORT "4433"
 //#define MESSAGE "GET /\r\n"
 
 static const char *TAG = "test_streams";
@@ -1092,8 +1090,7 @@ void check_memory() {
 
 
 
-// test_streams - tests multiple streams by creating them, sending data over each stream, closing streams
-// stream_type 0 = uni, stream_type 1 = bidi
+// throughput
 int throughput(TaskHandle_t main_task_handle, int stream_type, int stream_num) {
   struct client c;
   // initialisation
