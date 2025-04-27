@@ -39,8 +39,12 @@
     #warning "Check components/wolfssl/include"
 #endif
 
-#define EXAMPLE_ESP_WIFI_SSID "FancyWifi"
-#define EXAMPLE_ESP_WIFI_PASS "wirelessp"
+
+////////////////////////////////////////////////////////////////////
+//////////////// Enter WiFi Credentials Here ///////////////////////
+////////////////////////////////////////////////////////////////////
+#define EXAMPLE_ESP_WIFI_SSID "SSID_HERE"
+#define EXAMPLE_ESP_WIFI_PASS "PASSWORD_HERE"
 
 /* When there's too little heap, WiFi quietly refuses to connect */
 #define WIFI_LOW_HEAP_WARNING 21132

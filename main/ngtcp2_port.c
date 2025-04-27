@@ -39,20 +39,15 @@ TaskHandle_t main_task_handle = NULL;
 void check_memory_here() {
     size_t total_heap = heap_caps_get_total_size(MALLOC_CAP_8BIT);
     size_t free_heap = heap_caps_get_free_size(MALLOC_CAP_8BIT);
-    size_t min_free_heap = heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT);
-  
-    UBaseType_t high_water_mark = uxTaskGetStackHighWaterMark(NULL);
-  
-    printf("Total heap: %d bytes, Free heap: %d bytes, Min free heap: %d bytes\n", total_heap, free_heap, min_free_heap);
-    printf("Task stack high water mark: %d words\n", high_water_mark);
+    
+    printf("Total heap: %d bytes, Free heap: %d bytes\n", total_heap, free_heap);
   }
 
 void app_main_logic(void) {
     esp_err_t ret = 0;
-    check_memory_here();
     // initialise the flash - used to store wifi credentials
     ESP_ERROR_CHECK(nvs_flash_init());
-    check_memory_here();
+
     // connect to wifi
     ret = wifi_init_sta();
         while (ret != 0) {
@@ -62,22 +57,14 @@ void app_main_logic(void) {
             ret = wifi_init_sta();
         }
     
-    check_memory_here();
+
     // to debug wolfssl - uncomment this line
     //wolfSSL_Debugging_ON();
-    int num_streams = 3;
-
-    ESP_LOGI(TAG, "Entering deep sleep for 1 minute...");
-
-    // Set wake-up time to 60 seconds (in microseconds)
-    esp_sleep_enable_timer_wakeup(300000000);  // 5 minutes in microseconds
-    esp_deep_sleep_start();  // Device will reset on wakeup
-
-    // Code below here will never be reached
-    ESP_LOGI(TAG, "example complete");
-
-    throughput(main_task_handle, 1, num_streams);
-    // test_streams(main_task_handle, 1, num_streams);
+    int num_streams = 3;    
+    
+    // to run throughput or test streams examples, uncomment either example
+    // throughput(main_task_handle, 1, num_streams);
+    test_streams(main_task_handle, 1, num_streams);
 
     ESP_LOGI(TAG, "example complete");
     
