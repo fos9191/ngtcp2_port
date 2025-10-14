@@ -1,8 +1,9 @@
 # QUIC for ESP32
-A port of ngtcp2 for ESP-IDF. This repository contains the code for a QUIC stack consisting of LwIP, WolfSSL and a ngtcp2 port for ESP-IDF. It has been tested for the ESP32-WROOM-32E development board. 
+This project implements a QUIC stack for ESP32. The stack consists of LwIP, WolfSSL and a ngtcp2 port for ESP-IDF. It was developed to test the feasibility of deploying QUIC — a modern transport protocol used by HTTP/3 — on resource-constrained embedded devices. It has been developed and tested on the ESP32-WROOM-32E.
+
+![System Architecture](docs/images/design_overview.png)
 
 ## Instructions to run
-
 1. The ESP32 and the machine running the server must be connected to the same WiFi access point. To connect the ESP32 to the access point, enter the WiFi credentials in the /main/wifi_connect.c file where instructed. 
 2. Next, find the IP address of the machine that will run the server by using the follownig commands ``ìpconfig`` (Windows), ``ìp addr`` (Linux) or ``ìfconfig`` (MacOS). Take this IP address and place it into the REMOTE_HOST macro in the test_streams.c example (see components/quic/examples). 
 3. Ensure that the port number in the components/quic/examples/quic_server.py file is the same as the REMOTE_PORT macro in the example you wish to run. 
